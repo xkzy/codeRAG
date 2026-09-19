@@ -191,10 +191,17 @@ func (s *CodeIndexService) ResolveDataFlow(projectID string) error {
 }
 
 func langGroup(path string) string {
-	switch strings.ToLower(filepath.Ext(path)) {
+	ext := strings.ToLower(filepath.Ext(path))
+	if sp := specFor(ext); sp != nil {
+		if sp.group != "" {
+			return sp.group
+		}
+		return sp.name
+	}
+	switch ext {
 	case ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs":
 		return "js"
-	case ".c", ".h", ".cc", ".cpp", ".hpp":
+	case ".c", ".h", ".cc", ".cpp", ".hpp", ".cxx", ".hxx", ".hh":
 		return "c"
 	case "":
 		return ""

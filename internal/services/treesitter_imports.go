@@ -110,6 +110,9 @@ func extractImports(content, suffix string) []string {
 	if t, ok := extractImportsTreeSitter(content, suffix); ok {
 		return t
 	}
+	if sp := specFor(suffix); sp != nil {
+		return specImports(sp, content)
+	}
 	var out []string
 	for _, match := range importRe.FindAllStringSubmatch(content, -1) {
 		for _, g := range match[1:] {

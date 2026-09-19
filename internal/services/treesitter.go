@@ -28,7 +28,7 @@ type typeMatch struct {
 }
 
 func languageFor(suffix string) *sitter.Language {
-	switch suffix {
+	switch strings.ToLower(suffix) {
 	case ".py":
 		return python.GetLanguage()
 	case ".go":
@@ -37,11 +37,11 @@ func languageFor(suffix string) *sitter.Language {
 		return rust.GetLanguage()
 	case ".c", ".h":
 		return c.GetLanguage()
-	case ".cc", ".cpp", ".hpp":
+	case ".cc", ".cpp", ".hpp", ".cxx", ".hxx", ".hh":
 		return cpp.GetLanguage()
 	case ".java":
 		return java.GetLanguage()
-	case ".js":
+	case ".js", ".jsx", ".mjs", ".cjs":
 		return javascript.GetLanguage()
 	case ".ts":
 		return typescript.GetLanguage()
@@ -147,6 +147,9 @@ func typeFromNode(n *sitter.Node, src []byte) (typeMatch, bool) {
 func extractTypes(content, suffix string) []typeMatch {
 	if matches, ok := extractTypesTreeSitter(content, suffix); ok {
 		return matches
+	}
+	if sp := specFor(suffix); sp != nil {
+		return specTypes(sp, content)
 	}
 	var out []typeMatch
 	for _, idx := range typeRe.FindAllStringSubmatchIndex(content, -1) {

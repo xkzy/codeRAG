@@ -229,6 +229,8 @@ func (r *ToolRegistry) registerAll() {
 
 	r.register("server_status", "codeRAG health: graph size, per-project index/memory status, tool usage, token savings, last maintenance and eval", map[string]any{}, []string{}, r.handleServerStatus)
 
+	r.register("list_languages", "List every language the indexer supports with file extensions and the extraction engine (tree-sitter, regex or label-scanner for assembly)", map[string]any{}, []string{}, r.handleListLanguages)
+
 	r.register("run_eval", "codeRAG self-evaluation: retrieval quality, call/inheritance resolution, index freshness and memory retention with a 0-100 score", baseProps(map[string]any{}), requiredBase, r.handleRunEval)
 
 	r.register("run_benchmark", "Deterministic runtime benchmark: reference accuracy, invalid-reference rejection, slice arithmetic, context tokens vs naive top-K baseline", baseProps(map[string]any{
@@ -641,7 +643,7 @@ var paginatedTools = map[string]bool{
 }
 
 // globalTools operate on the whole installation and take no project_id.
-var globalTools = map[string]bool{"server_status": true, "run_maintenance": true}
+var globalTools = map[string]bool{"server_status": true, "run_maintenance": true, "list_languages": true}
 
 const maxFetch = 1000
 

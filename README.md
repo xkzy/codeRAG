@@ -13,7 +13,7 @@ A multi-level persistent cache (exact, semantic, tool result, analysis artifact)
 | **Type** | Local MCP server | Cloud SaaS + self-hosted | Research prototypes | Graph DB (Redis module) | MCP wrapper |
 | **Deployment** | Single binary, SQLite | Kubernetes/Docker | Python/Neo4j | Docker/Redis | Python MCP |
 | **Data locality** | 100% local | Cloud (code leaves) | Local | Local | Local |
-| **Languages** | 7 (Go, Py, JS/TS, Java, Rust, C/C++) | 40+ | Varies | Any (Cypher) | Limited |
+| **Languages** | 50+ (9 tree-sitter, 40+ regex, assembly) | 40+ | Varies | Any (Cypher) | Limited |
 | **Indexing** | Regex incremental | Precise (LSIF/SCIP) | AST-based | Manual | Regex |
 | **Graph** | In-memory + gob persist | Distributed | Neo4j/NetworkX | Property graph (Cypher) | NetworkX |
 | **MCP native** | ✅ Yes | ❌ (API only) | ❌ | ❌ | ✅ Yes |

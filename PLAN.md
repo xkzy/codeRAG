@@ -30,6 +30,13 @@
 - `adapters/jetbrains/adapter.go` - JetBrains plugin shell
 - All with tests
 
+### Language coverage: 50+ languages incl. assembly (DONE)
+- `internal/services/langs.go`: table-driven registry (`langSpec`) of regex extractors for functions, types, imports and calls; 9 languages keep tree-sitter (`treesitter.go`).
+- Added: C#, Kotlin, Swift, Scala, Ruby, Crystal, PHP, Lua, Perl, R, Julia, Dart, Haskell, OCaml, F#, Elixir, Erlang, Clojure, Groovy, Shell, PowerShell, Objective-C, Zig, Nim, D, Fortran, COBOL, Pascal, Ada, Solidity, Verilog/SystemVerilog, VHDL, SQL, Protobuf, Lisp/Elisp, Scheme/Racket, Tcl, CUDA/GLSL/HLSL, Vue, Svelte, JSX.
+- Assembly (`langs_asm.go`; GAS, NASM, MASM, ARM, AArch64, RISC-V, MIPS): functions are recovered from labels (global, `.type @function`, `PROC`, or call targets); local, jump and data labels are ignored; `call/bl/jal/tail` and tail-jumps become CALLS. Asm shares a call-resolution group with C so asm<->C calls resolve.
+- MCP tool `list_languages` reports every language, extension and engine.
+- Regex languages have no inheritance or data-flow edges; upgrading one to tree-sitter means adding its grammar to `languageFor` and its node types to the funcs/types tables.
+
 ### Phase 5: Privacy / Context Firewall (DONE)
 - `internal/privacy/types.go` - PrivacyMode, DisclosureLevel, ReconstructionRisk, PseudonymKind, ContentKind
 - `internal/privacy/policy.go` - PrivacyPolicy with project-scoped config, validation, per-mode defaults

@@ -1232,3 +1232,8 @@ func (r *ToolRegistry) handlePrivacyPolicy(args map[string]any) (map[string]any,
 	}
 	return structToMap(policy)
 }
+
+func (r *ToolRegistry) handleListLanguages(args map[string]any) (map[string]any, error) {
+	langs := services.SupportedLanguages()
+	return map[string]any{"count": len(langs), "languages": langs}, nil
+}

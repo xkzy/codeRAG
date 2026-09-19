@@ -397,6 +397,9 @@ func extractFunctionInfos(content, suffix string) []funcInfo {
 	if fs, ok := extractFunctionsTreeSitter(content, suffix); ok {
 		return fs
 	}
+	if sp := specFor(suffix); sp != nil {
+		return specFunctionInfos(sp, content)
+	}
 	lines := strings.Split(content, "\n")
 	var out []funcInfo
 	for _, fm := range extractFunctions(content, suffix) {
