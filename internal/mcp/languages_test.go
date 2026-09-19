@@ -56,3 +56,45 @@ func TestMultiLanguageIndexing(t *testing.T) {
 		t.Errorf("list_languages: %v %v", langs, err)
 	}
 }
+
+func TestGoCallsPlan9Assembly(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"sum.go":      "package x\n\nfunc Sum(a []byte) int { return blockAVX2(a) }\n\nfunc blockAVX2(a []byte) int\n",
+		"sum_amd64.s": "#include \"textflag.h\"\nTEXT ·blockAVX2(SB), NOSPLIT, $0-32\n\tCALL ·helper(SB)\n\tRET\nTEXT ·helper(SB), NOSPLIT, $0\n\tRET\n",
+	}
+	for n, s := range files {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reg := NewToolRegistry(services.ApplicationInMemory())
+	if _, err := reg.Call("index_repository", map[string]any{"project_id": "p9", "path": dir}); err != nil {
+		t.Fatal(err)
+	}
+	find := func(name string) []map[string]any {
+		r, err := reg.Call("find_function", map[string]any{"project_id": "p9", "query": name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, _ := r["results"].([]map[string]any)
+		return rows
+	}
+	// helper is only called from assembly; blockAVX2 (asm body) is called from Go.
+	for _, name := range []string{"helper", "blockAVX2"} {
+		rows := find(name)
+		if len(rows) == 0 {
+			t.Fatalf("%s not indexed", name)
+		}
+		linked := false
+		for _, row := range rows {
+			c, err := reg.Call("get_callers", map[string]any{"project_id": "p9", "function_id": row["id"]})
+			if err == nil && c["count"].(int) > 0 {
+				linked = true
+			}
+		}
+		if !linked {
+			t.Errorf("%s has no callers", name)
+		}
+	}
+}

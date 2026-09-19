@@ -278,8 +278,13 @@ func TestAsmImportsAndGroup(t *testing.T) {
 		t.Errorf("got %v", got)
 	}
 	// asm and C share a call-resolution group so asm can call C and vice versa
-	if langGroup("x.s") != langGroup("y.c") {
-		t.Error("asm and c must share a group")
+	for _, native := range []string{"y.c", "y.go", "y.rs", "y.cpp"} {
+		if !groupsCompatible(langGroup("x.s"), langGroup(native)) || !groupsCompatible(langGroup(native), langGroup("x.s")) {
+			t.Errorf("asm and %s must link both ways", native)
+		}
+	}
+	if groupsCompatible(langGroup("x.s"), langGroup("y.py")) || groupsCompatible(langGroup("y.go"), langGroup("y.c")) {
+		t.Error("asm must not link to python, and go must not link to c")
 	}
 	if langGroup("a.kt") == langGroup("b.java") {
 		t.Error("kotlin and java must not share a group")

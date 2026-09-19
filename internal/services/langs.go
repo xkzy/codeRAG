@@ -210,7 +210,7 @@ var langSpecs = []*langSpec{
 		funcRes:  []*regexp.Regexp{genericFuncRe},
 		typeRe:   typeKw(`struct|class`),
 		importRe: re(`(?m)^\s*#include\s*[<"]([^>"]+)`)},
-	{name: "asm", exts: []string{".asm", ".s", ".nasm", ".masm", ".inc"}, group: "c", custom: extractAsmFunctions,
+	{name: "asm", exts: []string{".asm", ".s", ".nasm", ".masm", ".inc"}, group: "asm", custom: extractAsmFunctions,
 		importRe: re(`(?im)^\s*[%.#]?include\s+["<']?([^">'\s]+)`)},
 }
 

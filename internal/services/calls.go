@@ -210,12 +210,22 @@ func langGroup(path string) string {
 	}
 }
 
+// asmLinkable are the groups whose functions are commonly implemented in or
+// called from assembly (C ABI, Go's Plan 9 stubs, Rust extern "C").
+var asmLinkable = map[string]bool{"c": true, ".go": true, ".rs": true}
+
+// groupsCompatible reports whether a call may resolve across two language
+// groups: only within a group, or between assembly and a native language.
+func groupsCompatible(a, b string) bool {
+	return a == b || (a == "asm" && asmLinkable[b]) || (b == "asm" && asmLinkable[a])
+}
+
 func pickTargets(candidates []string, pathOf map[string]string, callerPath string) ([]string, float64) {
 	// A Go call never resolves to a Python function of the same name.
 	group := langGroup(callerPath)
 	filtered := candidates[:0:0]
 	for _, id := range candidates {
-		if langGroup(pathOf[id]) == group {
+		if groupsCompatible(langGroup(pathOf[id]), group) {
 			filtered = append(filtered, id)
 		}
 	}
