@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,13 +10,21 @@ import (
 	"strings"
 )
 
+// Message is an incoming JSON-RPC request or notification (no ID).
 type Message struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      any             `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
-	Result  any             `json:"result,omitempty"`
-	Error   *ErrorObject    `json:"error,omitempty"`
+}
+
+// response is an outgoing JSON-RPC response: exactly one of Result or Error,
+// never "method", and "id":null when the request could not be parsed.
+type response struct {
+	JSONRPC string       `json:"jsonrpc"`
+	ID      any          `json:"id"`
+	Result  any          `json:"result,omitempty"`
+	Error   *ErrorObject `json:"error,omitempty"`
 }
 
 type ErrorObject struct {
@@ -42,6 +49,10 @@ type Server struct {
 	registry *ToolRegistry
 	reader   *bufio.Reader
 	writer   io.Writer
+	// newline is the framing of the message being answered: MCP's stdio
+	// transport is one JSON object per line; Content-Length (LSP style) is
+	// still accepted and answered in kind.
+	newline bool
 }
 
 type ServerOption func(*Server)
@@ -66,77 +77,101 @@ func NewServer(
 	return s
 }
 
+const (
+	errParse          = -32700
+	errInvalidRequest = -32600
+	errMethodNotFound = -32601
+	errInvalidParams  = -32602
+	errServer         = -32000
+)
+
+// supportedProtocols are the MCP revisions this server can speak; the tool
+// surface is identical across them.
+var supportedProtocols = map[string]bool{"2024-11-05": true, "2025-03-26": true, "2025-06-18": true}
+
 func (s *Server) Run() error {
 	for {
-		msg, err := s.readMessage()
+		payload, err := s.readPayload()
+		if payload != nil {
+			s.dispatch(payload)
+		}
 		if err == io.EOF {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		if msg == nil {
-			continue
-		}
-		s.handleMessage(msg)
 	}
 }
 
-func (s *Server) readMessage() (*Message, error) {
-	header, err := s.reader.ReadString('\n')
-	if err != nil {
+// readPayload returns the next message body, detecting the framing. A nil
+// payload with a nil error means "nothing to process yet" (blank line).
+func (s *Server) readPayload() ([]byte, error) {
+	line, err := s.reader.ReadString('\n')
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
 		return nil, err
 	}
-	header = strings.TrimSpace(header)
-	if header == "" {
-		return nil, nil
+	if !strings.HasPrefix(strings.ToLower(trimmed), "content-length:") {
+		s.newline = true
+		return []byte(trimmed), err // newline-delimited JSON; err may be a final EOF
 	}
-	header = strings.ToLower(header) // header names are case-insensitive
-	if !strings.HasPrefix(header, "content-length:") {
-		return nil, nil
+	s.newline = false
+	length, convErr := strconv.Atoi(strings.TrimSpace(trimmed[len("content-length:"):]))
+	if convErr != nil || length < 0 {
+		return nil, fmt.Errorf("invalid content-length: %q", trimmed)
 	}
-	lengthStr := strings.TrimPrefix(header, "content-length:")
-	lengthStr = strings.TrimSpace(lengthStr)
-	length, err := strconv.Atoi(lengthStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid content-length: %s", lengthStr)
+	for { // remaining headers, ended by a blank line
+		h, herr := s.reader.ReadString('\n')
+		if herr != nil {
+			return nil, herr
+		}
+		if strings.TrimSpace(h) == "" {
+			break
+		}
 	}
-
-	_, err = s.reader.ReadString('\n')
-	if err != nil {
-		return nil, err
-	}
-
 	body := make([]byte, length)
 	if _, err := io.ReadFull(s.reader, body); err != nil {
 		return nil, err
 	}
-	var msg Message
-	if err := json.Unmarshal(body, &msg); err != nil {
-		return nil, err
-	}
-	return &msg, nil
+	return body, nil
 }
 
-func (s *Server) handleMessage(msg *Message) {
-	var result any
-	var rpcErr *ErrorObject
+func (s *Server) dispatch(payload []byte) {
+	var msg Message
+	if err := json.Unmarshal(payload, &msg); err != nil {
+		s.write(response{JSONRPC: "2.0", Error: &ErrorObject{Code: errParse, Message: "parse error: " + err.Error()}})
+		return
+	}
+	result, rpcErr := s.handle(&msg)
+	if msg.ID == nil {
+		return // notifications are never answered
+	}
+	s.write(response{JSONRPC: "2.0", ID: msg.ID, Result: result, Error: rpcErr})
+}
 
-	defer func() {
-		s.writeResponse(msg, result, rpcErr)
-	}()
-
+func (s *Server) handle(msg *Message) (any, *ErrorObject) {
 	switch msg.Method {
 	case "initialize":
-		result = InitializeResult{
-			ProtocolVersion: "2024-11-05",
+		var p struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		_ = json.Unmarshal(msg.Params, &p)
+		version := "2024-11-05"
+		if supportedProtocols[p.ProtocolVersion] {
+			version = p.ProtocolVersion
+		}
+		return InitializeResult{
+			ProtocolVersion: version,
 			Capabilities:    map[string]any{"tools": map[string]any{}},
 			ServerInfo:      map[string]any{"name": "codeRAG", "version": s.version},
-		}
+		}, nil
+
+	case "ping":
+		return map[string]any{}, nil
 
 	case "tools/list":
-		tools := s.registry.Definitions()
-		result = map[string]any{"tools": tools}
+		return map[string]any{"tools": s.registry.Definitions()}, nil
 
 	case "tools/call":
 		var callParams struct {
@@ -144,92 +179,39 @@ func (s *Server) handleMessage(msg *Message) {
 			Arguments json.RawMessage `json:"arguments"`
 		}
 		if err := json.Unmarshal(msg.Params, &callParams); err != nil {
-			rpcErr = &ErrorObject{Code: -32602, Message: "invalid params: " + err.Error()}
-			return
+			return nil, &ErrorObject{Code: errInvalidParams, Message: "invalid params: " + err.Error()}
 		}
 		var args map[string]any
 		if len(callParams.Arguments) > 0 {
 			if err := json.Unmarshal(callParams.Arguments, &args); err != nil {
-				rpcErr = &ErrorObject{Code: -32602, Message: "invalid arguments: " + err.Error()}
-				return
+				return nil, &ErrorObject{Code: errInvalidParams, Message: "invalid arguments: " + err.Error()}
 			}
 		}
 		res, err := s.registry.Call(callParams.Name, args)
 		if err != nil {
-			rpcErr = &ErrorObject{Code: -32000, Message: err.Error()}
-			return
+			return nil, &ErrorObject{Code: errServer, Message: err.Error()}
 		}
-
 		text, err := json.Marshal(res)
 		if err != nil {
-			rpcErr = &ErrorObject{Code: -32000, Message: err.Error()}
-			return
+			return nil, &ErrorObject{Code: errServer, Message: err.Error()}
 		}
-		result = map[string]any{
-			"content": []map[string]any{
-				{"type": "text", "text": string(text)},
-			},
-		}
-
-	case "initialized":
-		// Notification, no response needed
-
-	default:
-		return
+		return map[string]any{"content": []map[string]any{{"type": "text", "text": string(text)}}}, nil
 	}
-}
-
-func (s *Server) writeResponse(msg *Message, result any, errObj *ErrorObject) {
-	if msg.ID == nil && msg.Method != "initialized" {
-		return
-	}
-	if msg.Method == "initialized" {
-		return
-	}
-
-	var resp Message
-	resp.JSONRPC = "2.0"
-	resp.ID = msg.ID
-	if errObj != nil {
-		resp.Error = errObj
-	} else {
-		resp.Result = result
-	}
-
-	data, err := json.Marshal(resp)
-	if err != nil {
-		return
-	}
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))
-	s.writer.Write([]byte(header))
-	s.writer.Write(data)
-}
-
-func ReadMessage(reader *bufio.Reader) (*Message, error) {
-	header, err := reader.ReadString('\n')
-	if err != nil {
-		return nil, err
-	}
-	header = strings.TrimSpace(header)
-	if header == "" {
+	if strings.HasPrefix(msg.Method, "notifications/") || msg.Method == "initialized" {
 		return nil, nil
 	}
-	lengthStr := strings.TrimPrefix(strings.ToLower(header), "content-length:")
-	lengthStr = strings.TrimSpace(lengthStr)
-	length, err := strconv.Atoi(lengthStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid content-length: %s", lengthStr)
-	}
-	reader.ReadString('\n')
-	body := make([]byte, length)
-	if _, err := io.ReadFull(reader, body); err != nil {
-		return nil, err
-	}
-	var msg Message
-	if err := json.Unmarshal(body, &msg); err != nil {
-		return nil, err
-	}
-	return &msg, nil
+	return nil, &ErrorObject{Code: errMethodNotFound, Message: "method not found: " + msg.Method}
 }
 
-var _ = bytes.MinRead
+// write emits one response as a single Write so concurrent output cannot interleave.
+func (s *Server) write(r response) {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return
+	}
+	if s.newline {
+		s.writer.Write(append(data, '\n'))
+		return
+	}
+	s.writer.Write(append([]byte(fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))), data...))
+}
