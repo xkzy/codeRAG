@@ -282,7 +282,40 @@ func SupportedLanguages() []map[string]any {
 	return out
 }
 
-func lineOf(content string, offset int) int { return strings.Count(content[:offset], "\n") + 1 }
+// lineIndex maps byte offsets and 1-based line numbers in O(log n) / O(1), so
+// extractors stay linear on files with tens of thousands of definitions.
+type lineIndex struct {
+	content string
+	starts  []int // byte offset of each line's first byte
+}
+
+func newLineIndex(content string) *lineIndex {
+	starts := []int{0}
+	for i := 0; i < len(content); i++ {
+		if content[i] == '\n' {
+			starts = append(starts, i+1)
+		}
+	}
+	return &lineIndex{content, starts}
+}
+
+// lineOf returns the 1-based line containing the byte offset.
+func (x *lineIndex) lineOf(offset int) int {
+	return sort.Search(len(x.starts), func(i int) bool { return x.starts[i] > offset })
+}
+
+// span returns the byte range of lines startLine..endLine (inclusive, 1-based),
+// matching lineSpan's result without rescanning the file.
+func (x *lineIndex) span(startLine, endLine int) span {
+	start, end := 0, len(x.content)
+	if startLine >= 1 && startLine <= len(x.starts) {
+		start = x.starts[startLine-1]
+	}
+	if endLine >= 1 && endLine < len(x.starts) {
+		end = x.starts[endLine] - 1
+	}
+	return span{startByte: start, endByte: end}
+}
 
 // cleanSymbolName reduces schema-qualified, quoted or owner-qualified names to the bare identifier.
 func cleanSymbolName(name string) string {
@@ -294,7 +327,7 @@ func cleanSymbolName(name string) string {
 }
 
 // specFunctions finds function definitions with a spec's regexes.
-func specFunctions(sp *langSpec, content string) []functionMatch {
+func specFunctions(sp *langSpec, content string, lx *lineIndex) []functionMatch {
 	var out []functionMatch
 	seen := map[int]bool{}
 	for _, r := range sp.funcRes {
@@ -314,7 +347,7 @@ func specFunctions(sp *langSpec, content string) []functionMatch {
 				}
 			}
 			seen[m[2]] = true
-			out = append(out, functionMatch{name: name, params: params, start: lineOf(content, m[2])})
+			out = append(out, functionMatch{name: name, params: params, start: lx.lineOf(m[2])})
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].start < out[j].start })
@@ -327,7 +360,8 @@ func specFunctionInfos(sp *langSpec, content string) []funcInfo {
 		return sp.custom(content)
 	}
 	lines := strings.Split(content, "\n")
-	matches := specFunctions(sp, content)
+	lx := newLineIndex(content)
+	matches := specFunctions(sp, content, lx)
 	cre := callRe
 	if sp.callRe != nil {
 		cre = sp.callRe
@@ -349,7 +383,7 @@ func specFunctionInfos(sp *langSpec, content string) []funcInfo {
 			end = len(lines)
 		}
 		fi := funcInfo{name: fm.name, params: countParams(fm.params), start: fm.start, end: end,
-			span: lineSpan(content, fm.start, end)}
+			span: lx.span(fm.start, end)}
 		for _, cm := range cre.FindAllStringSubmatch(strings.Join(lines[start:end], "\n"), -1) {
 			for _, g := range cm[1:] {
 				if g != "" {
@@ -370,6 +404,7 @@ func specTypes(sp *langSpec, content string) []typeMatch {
 	if sp.typeRe == nil {
 		return nil
 	}
+	lx := newLineIndex(content)
 	var out []typeMatch
 	for _, idx := range sp.typeRe.FindAllStringSubmatchIndex(content, -1) {
 		kw, name := content[idx[2]:idx[3]], content[idx[4]:idx[5]]
@@ -382,9 +417,9 @@ func specTypes(sp *langSpec, content string) []typeMatch {
 		if structKeywords[kw] {
 			kind = "Struct"
 		}
-		line := lineOf(content, idx[4])
+		line := lx.lineOf(idx[4])
 		out = append(out, typeMatch{name: name, kind: kind, typeKind: kw, start: line, end: line,
-			span: lineSpan(content, line, line)})
+			span: lx.span(line, line)})
 	}
 	return out
 }

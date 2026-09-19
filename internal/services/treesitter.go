@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"strings"
+	"time"
 
 	sitter "github.com/smacker/go-tree-sitter"
 	"github.com/smacker/go-tree-sitter/c"
@@ -25,6 +26,19 @@ type typeMatch struct {
 	end      int
 	refs     []string // types mentioned by fields and members, excluding bases
 	span     span
+}
+
+// treeSitterParseTimeout bounds one parse. Real files parse in milliseconds; a
+// crafted file can send the grammar into pathological error recovery for
+// minutes, which would stall indexing of an untrusted repository.
+var treeSitterParseTimeout = 5 * time.Second
+
+// parseWithTimeout parses src, giving up after treeSitterParseTimeout. Callers
+// treat an error as "unsupported" and fall back to the regex extractors.
+func parseWithTimeout(parser *sitter.Parser, src []byte) (*sitter.Tree, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), treeSitterParseTimeout)
+	defer cancel()
+	return parser.ParseCtx(ctx, nil, src)
 }
 
 func languageFor(suffix string) *sitter.Language {
@@ -79,7 +93,7 @@ func extractTypesTreeSitter(content, suffix string) (matches []typeMatch, ok boo
 	defer parser.Close()
 	parser.SetLanguage(lang)
 	src := []byte(content)
-	tree, err := parser.ParseCtx(context.Background(), nil, src)
+	tree, err := parseWithTimeout(parser, src)
 	if err != nil || tree == nil {
 		return nil, false
 	}

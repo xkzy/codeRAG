@@ -1,7 +1,6 @@
 package services
 
 import (
-	"context"
 	"strings"
 
 	sitter "github.com/smacker/go-tree-sitter"
@@ -20,7 +19,7 @@ func extractImportsTreeSitter(content, suffix string) (targets []string, ok bool
 	defer parser.Close()
 	parser.SetLanguage(lang)
 	src := []byte(content)
-	tree, err := parser.ParseCtx(context.Background(), nil, src)
+	tree, err := parseWithTimeout(parser, src)
 	if err != nil || tree == nil {
 		return nil, false
 	}

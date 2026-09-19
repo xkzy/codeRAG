@@ -1,6 +1,10 @@
 package services
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestExtractTypesTreeSitter(t *testing.T) {
 	cases := []struct {
@@ -38,5 +42,26 @@ func TestExtractTypesRegexFallback(t *testing.T) {
 	got := extractTypes("struct A {};\nclass B {};\n", ".unknown")
 	if len(got) != 2 || got[0].kind != "Struct" || got[1].kind != "Class" {
 		t.Fatalf("unexpected fallback result: %+v", got)
+	}
+}
+
+// A crafted file can send a grammar into pathological error recovery. The parse
+// must be abandoned at the timeout instead of stalling the indexer.
+func TestTreeSitterParseIsBounded(t *testing.T) {
+	old := treeSitterParseTimeout
+	treeSitterParseTimeout = 200 * time.Millisecond
+	defer func() { treeSitterParseTimeout = old }()
+
+	hostile := strings.Repeat(".globl x\nx:\n", 50000)
+	for _, ext := range []string{".java", ".py", ".rs", ".c", ".go", ".js", ".ts"} {
+		start := time.Now()
+		extractFunctionInfos(hostile, ext)
+		extractTypes(hostile, ext)
+		extractImports(hostile, ext)
+		extractRelationsTreeSitter(hostile, ext)
+		// 4 parses, each capped at 200ms; generous slack for slow CI.
+		if d := time.Since(start); d > 5*time.Second {
+			t.Errorf("%s: extraction took %v; parse is not bounded", ext, d)
+		}
 	}
 }

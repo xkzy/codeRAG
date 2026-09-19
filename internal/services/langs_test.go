@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 func funcNames(src, ext string) []string {
@@ -340,5 +341,61 @@ func TestAsmFirstLabelFallbackOnlyWithoutGlobals(t *testing.T) {
 	// With a declared function, a preceding jump label is not a function.
 	if got := funcNames("stray:\n  nop\n.globl real\nreal:\n  ret\n", ".s"); !reflect.DeepEqual(got, []string{"real"}) {
 		t.Errorf("got %v", got)
+	}
+}
+
+func TestLineIndexMatchesLineSpan(t *testing.T) {
+	for _, src := range []string{"", "one", "a\nb\nc", "a\nb\nc\n", "\n\n", "x\r\ny\r\n"} {
+		lx := newLineIndex(src)
+		real := strings.Count(src, "\n") + 1 // lines that can hold a definition
+		if strings.HasSuffix(src, "\n") {
+			real-- // the empty "line" after a trailing newline is not a real line
+		}
+		if got := lx.span(real+1, real+1); strings.HasSuffix(src, "\n") && (got.startByte != len(src) || got.endByte != len(src)) {
+			t.Errorf("%q phantom line span = %v, want empty span at EOF", src, got)
+		}
+		n := real + 1
+		for s := 1; s <= real; s++ {
+			for e := s; e <= n; e++ {
+				if got, want := lx.span(s, e), lineSpan(src, s, e); got != want {
+					t.Errorf("%q span(%d,%d)=%v want %v", src, s, e, got, want)
+				}
+			}
+		}
+		for off := 0; off < len(src); off++ {
+			if got, want := lx.lineOf(off), strings.Count(src[:off], "\n")+1; got != want {
+				t.Errorf("%q lineOf(%d)=%d want %d", src, off, got, want)
+			}
+		}
+	}
+}
+
+// Quadratic behaviour shows up as growth well beyond the input growth, which is
+// independent of machine speed (and of the race detector's slowdown).
+func TestExtractorsStayLinear(t *testing.T) {
+	gen := map[string]func(n int) string{
+		".rb": func(n int) string { return strings.Repeat("def f(x)\nend\n", n) },
+		".s":  func(n int) string { return strings.Repeat(".globl x\nx:\n", n) },
+		".cs": func(n int) string { return strings.Repeat("public int F() {}\n", n) },
+	}
+	run := func(ext, src string) time.Duration {
+		best := time.Duration(1<<63 - 1)
+		for i := 0; i < 3; i++ { // best of 3 damps scheduler noise
+			start := time.Now()
+			extractFunctionInfos(src, ext)
+			extractTypes(src, ext)
+			if d := time.Since(start); d < best {
+				best = d
+			}
+		}
+		return best
+	}
+	const small, factor = 5000, 4
+	for ext, g := range gen {
+		a, b := run(ext, g(small)), run(ext, g(small*factor))
+		// linear ~4x, quadratic ~16x
+		if ratio := float64(b) / float64(a+1); ratio > 10 {
+			t.Errorf("%s: %dx the input took %.1fx as long (%v -> %v); extractor is not linear", ext, factor, ratio, a, b)
+		}
 	}
 }

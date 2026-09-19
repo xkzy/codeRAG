@@ -65,6 +65,7 @@ func plan9Name(sym string) string {
 // extractPlan9Functions handles Go assembler files, where functions are TEXT
 // symbols and every label is a local jump target.
 func extractPlan9Functions(content string, cleaned []string) []funcInfo {
+	lx := newLineIndex(content)
 	var out []funcInfo
 	var cur *funcInfo
 	closeCur := func(endLine int) {
@@ -75,7 +76,7 @@ func extractPlan9Functions(content string, cleaned []string) []funcInfo {
 			endLine = cur.start
 		}
 		cur.end = endLine
-		cur.span = lineSpan(content, cur.start, endLine)
+		cur.span = lx.span(cur.start, endLine)
 		out = append(out, *cur)
 		cur = nil
 	}
@@ -101,6 +102,7 @@ func extractPlan9Functions(content string, cleaned []string) []funcInfo {
 
 func extractAsmFunctions(content string) []funcInfo {
 	lines := strings.Split(content, "\n")
+	lx := newLineIndex(content)
 	cleaned := make([]string, len(lines))
 	for i, l := range lines {
 		cleaned[i] = asmClean(l)
@@ -140,7 +142,7 @@ func extractAsmFunctions(content string) []funcInfo {
 			endLine = cur.start
 		}
 		cur.end = endLine
-		cur.span = lineSpan(content, cur.start, endLine)
+		cur.span = lx.span(cur.start, endLine)
 		out = append(out, *cur)
 		cur = nil
 	}
