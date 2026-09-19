@@ -53,11 +53,11 @@ type ContextBlock struct {
 
 // CompiledContext is the output of ContextCompiler.Compile.
 type CompiledContext struct {
-	Question    string         `json:"question"`
-	Level       int            `json:"level"`
-	ApproxTokens int           `json:"approx_tokens"`
-	Truncated   bool           `json:"truncated,omitempty"`
-	Blocks      []ContextBlock `json:"blocks"`
+	Question     string         `json:"question"`
+	Level        int            `json:"level"`
+	ApproxTokens int            `json:"approx_tokens"`
+	Truncated    bool           `json:"truncated,omitempty"`
+	Blocks       []ContextBlock `json:"blocks"`
 	// Checklist is a runtime checklist for agents (populated at level 1+).
 	Checklist []string `json:"checklist,omitempty"`
 	// Explanation describes how the context was assembled (explain_context).
@@ -80,10 +80,10 @@ type ContextRequest struct {
 
 // PrivacyContext controls how the compiled context is sanitized before use.
 type PrivacyContext struct {
-	Mode       string   // privacy mode override (empty = use project policy)
-	Forbidden  []string // identifiers that must never appear
-	Allowed    []string // identifiers explicitly permitted
-	MaxTokens  int      // token budget for the sanitized text
+	Mode      string   // privacy mode override (empty = use project policy)
+	Forbidden []string // identifiers that must never appear
+	Allowed   []string // identifiers explicitly permitted
+	MaxTokens int      // token budget for the sanitized text
 }
 
 // ContextCompiler assembles multi-source context for an agent question.

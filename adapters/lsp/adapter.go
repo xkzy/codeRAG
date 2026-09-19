@@ -67,24 +67,24 @@ func (a LSPAdapter) Convert(ctx context.Context, input any) (*NormalizedLSPResul
 
 // NormalizedLSPResult is the normalized output from an LSP client.
 type NormalizedLSPResult struct {
-	Client       string             `json:"client"`
-	URI          string             `json:"uri"`
-	Language     string             `json:"language"`
-	Symbols      []DocumentSymbol   `json:"symbols"`
-	Completions  []CompletionItem   `json:"completions"`
-	Hover        *HoverInfo         `json:"hover"`
-	Definition   *Location          `json:"definition"`
-	References   []Location         `json:"references"`
+	Client      string           `json:"client"`
+	URI         string           `json:"uri"`
+	Language    string           `json:"language"`
+	Symbols     []DocumentSymbol `json:"symbols"`
+	Completions []CompletionItem `json:"completions"`
+	Hover       *HoverInfo       `json:"hover"`
+	Definition  *Location        `json:"definition"`
+	References  []Location       `json:"references"`
 }
 
 // DocumentSymbol represents a symbol in a document.
 type DocumentSymbol struct {
-	Name       string           `json:"name"`
-	Kind       string           `json:"kind"`
-	Range      Range            `json:"range"`
-	SelectionRange Range         `json:"selection_range"`
-	Children   []DocumentSymbol `json:"children"`
-	Detail     string           `json:"detail"`
+	Name           string           `json:"name"`
+	Kind           string           `json:"kind"`
+	Range          Range            `json:"range"`
+	SelectionRange Range            `json:"selection_range"`
+	Children       []DocumentSymbol `json:"children"`
+	Detail         string           `json:"detail"`
 }
 
 // Range represents a text range.
@@ -120,8 +120,8 @@ type HoverContent struct {
 
 // Location represents a location in a document.
 type Location struct {
-	URI   string  `json:"uri"`
-	Range *Range  `json:"range"`
+	URI   string `json:"uri"`
+	Range *Range `json:"range"`
 }
 
 // NewLSPAdapter creates a new LSP adapter with the given client.

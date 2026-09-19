@@ -16,27 +16,27 @@ func (BinjaAdapter) Name() string { return "binja" }
 
 // BinjaExport represents the expected JSON structure from Binary Ninja export.
 type BinjaExport struct {
-	BinaryID  string            `json:"binary_id"`
-	Path      string            `json:"path"`
-	SHA256    string            `json:"sha256"`
-	Functions []BinjaFunction   `json:"functions"`
+	BinaryID  string          `json:"binary_id"`
+	Path      string          `json:"path"`
+	SHA256    string          `json:"sha256"`
+	Functions []BinjaFunction `json:"functions"`
 }
 
 // BinjaFunction represents a function in Binary Ninja export.
 type BinjaFunction struct {
-	Address          string               `json:"address"`
-	Name             string               `json:"name"`
-	Size             int                  `json:"size,omitempty"`
-	Calls            []string             `json:"calls,omitempty"`
-	Strings          []string             `json:"strings,omitempty"`
-	DecompilerOutput string               `json:"decompiler_output,omitempty"`
-	BasicBlocks      []BinjaBasicBlock    `json:"basic_blocks,omitempty"`
+	Address          string            `json:"address"`
+	Name             string            `json:"name"`
+	Size             int               `json:"size,omitempty"`
+	Calls            []string          `json:"calls,omitempty"`
+	Strings          []string          `json:"strings,omitempty"`
+	DecompilerOutput string            `json:"decompiler_output,omitempty"`
+	BasicBlocks      []BinjaBasicBlock `json:"basic_blocks,omitempty"`
 }
 
 // BinjaBasicBlock represents a basic block in Binary Ninja export.
 type BinjaBasicBlock struct {
-	Address     string               `json:"address"`
-	Instruction []BinjaInstruction    `json:"instructions,omitempty"`
+	Address     string             `json:"address"`
+	Instruction []BinjaInstruction `json:"instructions,omitempty"`
 }
 
 // BinjaInstruction represents an instruction in Binary Ninja export.

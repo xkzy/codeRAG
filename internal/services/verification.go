@@ -383,14 +383,14 @@ func parseFindings(output, tool string) []VerificationFinding {
 
 func (r *VerificationRunner) record(projectID, agent string, res *VerificationResult) (string, error) {
 	props := map[string]any{
-		"project_id":   projectID,
-		"command":      res.Command,
-		"args":         strings.Join(res.Args, " "),
-		"status":       string(res.Status),
-		"exit_code":    res.ExitCode,
-		"duration":     res.Duration,
+		"project_id":    projectID,
+		"command":       res.Command,
+		"args":          strings.Join(res.Args, " "),
+		"status":        string(res.Status),
+		"exit_code":     res.ExitCode,
+		"duration":      res.Duration,
 		"finding_count": len(res.Findings),
-		"agent":        agent,
+		"agent":         agent,
 	}
 	if len(res.Output) > 512 {
 		props["output_snippet"] = res.Output[:512]

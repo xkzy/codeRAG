@@ -439,10 +439,10 @@ func dirExists(path string) bool {
 
 // AuthorStats holds blame line counts for one author on changed code.
 type AuthorStats struct {
-	Name   string `json:"name"`
-	Email  string `json:"email"`
-	Lines  int    `json:"lines_owned"`
-	Files  int    `json:"files"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	Lines int    `json:"lines_owned"`
+	Files int    `json:"files"`
 }
 
 // BlameAuthors runs git blame on the given repo-relative paths and returns per-author

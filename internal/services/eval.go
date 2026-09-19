@@ -328,6 +328,12 @@ func (a *Application) evalMemoryRetention(pid string) Metric {
 // Status is a read-only health snapshot of the whole installation.
 func (a *Application) Status() (map[string]any, error) {
 	out := map[string]any{}
+	if a.Daemon != nil {
+		out["daemon"] = a.Daemon.Status()
+	}
+	if a.Events != nil {
+		out["events"] = a.Events.Metrics()
+	}
 	if c, ok := a.Graph.(interface {
 		Counts() (map[string]int, map[string]int)
 	}); ok {
@@ -436,57 +442,57 @@ func max1(n int) int {
 
 // BenchmarkResult contains the results of a benchmark run.
 type BenchmarkResult struct {
-	ProjectID    string             `json:"project_id"`
-	RanAt        string             `json:"ran_at"`
-	Reference    ReferenceBenchmark `json:"reference_accuracy"`
+	ProjectID    string              `json:"project_id"`
+	RanAt        string              `json:"ran_at"`
+	Reference    ReferenceBenchmark  `json:"reference_accuracy"`
 	InvalidRef   InvalidRefBenchmark `json:"invalid_reference_rejection"`
-	Slice        SliceBenchmark     `json:"slice_arithmetic"`
-	Context      ContextBenchmark   `json:"context_tokens_vs_baseline"`
-	OverallScore int                `json:"overall_score"` // 0-100
+	Slice        SliceBenchmark      `json:"slice_arithmetic"`
+	Context      ContextBenchmark    `json:"context_tokens_vs_baseline"`
+	OverallScore int                 `json:"overall_score"` // 0-100
 }
 
 // ReferenceBenchmark measures reference resolution accuracy.
 type ReferenceBenchmark struct {
-	Total      int     `json:"total"`
-	Valid      int     `json:"valid"`
-	Stale      int     `json:"stale"`
-	Invalid    int     `json:"invalid"`
-	Accuracy   float64 `json:"accuracy"` // valid / total
-	Detail     string  `json:"detail"`
+	Total    int     `json:"total"`
+	Valid    int     `json:"valid"`
+	Stale    int     `json:"stale"`
+	Invalid  int     `json:"invalid"`
+	Accuracy float64 `json:"accuracy"` // valid / total
+	Detail   string  `json:"detail"`
 }
 
 // InvalidRefBenchmark measures rejection of invalid references.
 type InvalidRefBenchmark struct {
-	TotalRejected   int     `json:"total_rejected"`
-	TotalTested     int     `json:"total_tested"`
-	RejectionRate   float64 `json:"rejection_rate"`
-	FalsePositives  int     `json:"false_positives"` // valid IDs incorrectly rejected
-	FalseNegatives  int     `json:"false_negatives"` // invalid IDs not rejected
-	Detail          string  `json:"detail"`
+	TotalRejected  int     `json:"total_rejected"`
+	TotalTested    int     `json:"total_tested"`
+	RejectionRate  float64 `json:"rejection_rate"`
+	FalsePositives int     `json:"false_positives"` // valid IDs incorrectly rejected
+	FalseNegatives int     `json:"false_negatives"` // invalid IDs not rejected
+	Detail         string  `json:"detail"`
 }
 
 // SliceBenchmark measures slice arithmetic correctness.
 type SliceBenchmark struct {
-	TotalTested     int     `json:"total_tested"`
-	Correct         int     `json:"correct"`
-	Accuracy        float64 `json:"accuracy"`
-	Detail          string  `json:"detail"`
+	TotalTested int     `json:"total_tested"`
+	Correct     int     `json:"correct"`
+	Accuracy    float64 `json:"accuracy"`
+	Detail      string  `json:"detail"`
 }
 
 // ContextBenchmark compares ContextCompiler vs naive top-K baseline.
 type ContextBenchmark struct {
-	QueriesTested      int     `json:"queries_tested"`
-	AvgTokensCompiler  float64 `json:"avg_tokens_compiler"`
-	AvgTokensBaseline  float64 `json:"avg_tokens_baseline"`
-	TokenReductionPct  float64 `json:"token_reduction_pct"`
-	QualityScore       float64 `json:"quality_score"` // how much relevant content preserved
-	Detail             string  `json:"detail"`
+	QueriesTested     int     `json:"queries_tested"`
+	AvgTokensCompiler float64 `json:"avg_tokens_compiler"`
+	AvgTokensBaseline float64 `json:"avg_tokens_baseline"`
+	TokenReductionPct float64 `json:"token_reduction_pct"`
+	QualityScore      float64 `json:"quality_score"` // how much relevant content preserved
+	Detail            string  `json:"detail"`
 }
 
 // BenchmarkConfig controls benchmark behavior.
 type BenchmarkConfig struct {
-	NumQueries      int // number of queries for context benchmark (default 10)
-	MaxTokens       int // token budget for context compiler (default 2000)
+	NumQueries      int  // number of queries for context benchmark (default 10)
+	MaxTokens       int  // token budget for context compiler (default 2000)
 	IncludeBaseline bool // whether to run baseline comparison
 }
 
@@ -526,10 +532,10 @@ func (a *Application) RunBenchmark(projectID string, cfg BenchmarkConfig) (*Benc
 
 	// Calculate overall score (weighted average)
 	weights := map[string]float64{
-		"reference":    0.3,
-		"invalid_ref":  0.2,
-		"slice":        0.2,
-		"context":      0.3,
+		"reference":   0.3,
+		"invalid_ref": 0.2,
+		"slice":       0.2,
+		"context":     0.3,
 	}
 	var sum, totalWeight float64
 	sum += result.Reference.Accuracy * weights["reference"]
@@ -543,7 +549,7 @@ func (a *Application) RunBenchmark(projectID string, cfg BenchmarkConfig) (*Benc
 		totalWeight += weights["context"]
 	}
 	if totalWeight > 0 {
-		result.OverallScore = int(sum / totalWeight * 100 + 0.5)
+		result.OverallScore = int(sum/totalWeight*100 + 0.5)
 	}
 
 	// Store in graph
@@ -585,7 +591,7 @@ func (a *Application) benchmarkReferenceAccuracy(projectID string) ReferenceBenc
 		// Also test verify_reference with correct hash
 		if res.Status == RefValid && res.Source != nil && res.Source.ContentHash != "" {
 			v := a.Refs.Verify(projectID, VerifyRequest{
-				ID: stableID,
+				ID:                  stableID,
 				ExpectedContentHash: res.Source.ContentHash,
 			})
 			if v.Status != RefValid {
@@ -667,13 +673,13 @@ func (a *Application) benchmarkSliceArithmetic(projectID string) SliceBenchmark 
 
 	// Test cases: (base, offset, length, base_length, expected_valid, expected_end)
 	testCases := []struct {
-		base         string
-		offset       int
-		length       int
-		baseLength   int
-		expectValid  bool
-		expectEnd    int
-		description  string
+		base        string
+		offset      int
+		length      int
+		baseLength  int
+		expectValid bool
+		expectEnd   int
+		description string
 	}{
 		{"buf", 0, 10, 20, true, 10, "normal slice"},
 		{"buf", 5, 5, 20, true, 10, "mid slice"},
@@ -688,10 +694,10 @@ func (a *Application) benchmarkSliceArithmetic(projectID string) SliceBenchmark 
 	for _, tc := range testCases {
 		b.TotalTested++
 		req := SliceRequest{
-			Base:       tc.base,
-			Offset:     tc.offset,
-			Length:     &tc.length,
-			BaseLength: &tc.baseLength,
+			Base:        tc.base,
+			Offset:      tc.offset,
+			Length:      &tc.length,
+			BaseLength:  &tc.baseLength,
 			ElementSize: 1,
 		}
 		res := ComputeSlice(req)

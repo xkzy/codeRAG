@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-
 )
 
 func TestObjdumpAdapter(t *testing.T) {

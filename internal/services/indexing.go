@@ -2,6 +2,8 @@ package services
 
 import (
 	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"codergag/internal/cache"
 	"codergag/internal/graph"
 	"codergag/internal/ids"
 	"codergag/internal/models"
@@ -42,9 +45,19 @@ type IndexedFile struct {
 	Functions int
 }
 
+type FileChange struct {
+	Path    string
+	Deleted bool
+}
+
 type CodeIndexService struct {
 	graph         graph.GraphRepository
+	cache         *cache.CacheManager
 	parserVersion string
+}
+
+func (s *CodeIndexService) SetCache(cm *cache.CacheManager) {
+	s.cache = cm
 }
 
 func NewCodeIndexService(g graph.GraphRepository) *CodeIndexService {
@@ -136,6 +149,35 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 
 	s.resolveGraph(projectID)
 
+	// Run graphify as part of indexing - builds the knowledge graph
+	// automatically so the repository is always searchable.
+	// Skipped when an incremental pass found nothing new and a prior run exists.
+	changedCount := 0
+	for _, r := range results {
+		if r.Changed {
+			changedCount++
+		}
+	}
+	prior, _ := s.graph.FindNodes("GraphifyRun", map[string]any{"project_id": projectID})
+	skipGraphify := incremental && changedCount == 0 && len(deletedFiles) == 0 && len(prior) > 0
+	var graphErr error
+	var graphOut *Graph
+	if !skipGraphify {
+		graphOut, graphErr = NewGraphify(path, false, false).Run()
+	}
+	if graph := graphOut; !skipGraphify && graphErr == nil {
+		data, _ := json.Marshal(graph)
+		s.graph.UpsertNode("GraphifyRun", map[string]any{
+			"project_id": projectID,
+			"ran_at":     time.Now().UTC().Format(time.RFC3339),
+		}, map[string]any{
+			"graph_json":  string(data),
+			"nodes":       len(graph.Nodes),
+			"edges":       len(graph.Edges),
+			"communities": len(graph.Communities),
+		})
+	}
+
 	funcs := 0
 	changed := 0
 	for _, r := range results {
@@ -161,6 +203,82 @@ func (s *CodeIndexService) IndexFile(projectNodeID, projectID, filePath string, 
 		s.resolveGraph(projectID)
 	}
 	return res, err
+}
+
+// IndexFiles indexes specific files incrementally. Useful for change-based indexing.
+// Handles deleted files by removing them from the graph.
+func (s *CodeIndexService) IndexFiles(projectID, root string, files []string, incremental bool, ignore []string) (map[string]any, error) {
+	path, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	info, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, fmt.Errorf("not a repository directory: %s", root)
+	}
+	path = info
+
+	project, err := s.graph.UpsertNode("Project", map[string]any{"id": projectID}, map[string]any{
+		"project_id": projectID, "path": path,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var results []*IndexedFile
+	var failed []string
+	deleted := 0
+	for _, f := range files {
+		if _, err := os.Stat(f); os.IsNotExist(err) {
+			s.removeFile(projectID, f)
+			deleted++
+			continue
+		}
+		indexed, err := s.indexFile(project.ID, projectID, f, incremental)
+		if err != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", f, err))
+			continue
+		}
+		results = append(results, indexed)
+	}
+
+	funcs := 0
+	changed := 0
+	for _, r := range results {
+		funcs += r.Functions
+		if r.Changed {
+			changed++
+		}
+	}
+	if changed > 0 || deleted > 0 {
+		s.resolveGraph(projectID)
+	}
+	return map[string]any{
+		"project_id":     projectID,
+		"files_seen":     len(results),
+		"files_changed":  changed,
+		"files_deleted":  deleted,
+		"files_failed":   failed,
+		"functions":      funcs,
+		"parser_version": s.parserVersion,
+	}, errors.Join(errorsFromStrings(failed)...)
+}
+
+// removeFile removes a file and its associated symbols from the graph.
+func (s *CodeIndexService) removeFile(projectID, filePath string) {
+	existing, _ := s.graph.FindNodes("SourceFile", map[string]any{"project_id": projectID, "path": filePath})
+	if len(existing) == 0 {
+		return
+	}
+	fileNode := existing[0]
+	neighbors, _ := s.graph.Neighbors(fileNode.ID, "DEFINES", graph.DirOut)
+	deleted := []string{fileNode.ID}
+	for _, en := range neighbors {
+		deleted = append(deleted, en.Node.ID)
+	}
+	if len(deleted) > 0 {
+		s.graph.RemoveNodes(deleted)
+	}
 }
 
 func (s *CodeIndexService) indexFile(projectNodeID, projectID, filePath string, incremental bool) (*IndexedFile, error) {
@@ -439,4 +557,12 @@ func (s *CodeIndexService) headCommit(root string) string {
 		at  time.Time
 	}{sha, time.Now()}
 	return sha
+}
+
+func errorsFromStrings(msgs []string) []error {
+	errs := make([]error, 0, len(msgs))
+	for _, m := range msgs {
+		errs = append(errs, errors.New(m))
+	}
+	return errs
 }

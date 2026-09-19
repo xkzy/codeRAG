@@ -9,6 +9,7 @@ import (
 type Application struct {
 	Graph     graph.GraphRepository
 	Cache     *cache.CacheManager
+	Events    *EventEngine
 	Index     *CodeIndexService
 	Code      *CodeGraphService
 	Evidence  *EvidenceService
@@ -24,6 +25,7 @@ type Application struct {
 	Context   *ContextCompiler
 	Verify    *VerificationRunService
 	Privacy   *PrivacyService
+	Daemon    *Daemon
 }
 
 func NewApplication(g graph.GraphRepository) *Application {
@@ -34,6 +36,7 @@ func NewApplication(g graph.GraphRepository) *Application {
 	ev := NewEvidenceService(g)
 	app := &Application{
 		Graph:     g,
+		Events:    NewEventEngine(1024),
 		Index:     NewCodeIndexService(g),
 		Code:      NewCodeGraphService(g),
 		Evidence:  ev,
@@ -81,6 +84,11 @@ func ApplicationFromConfig(cfg *config.Config) (*Application, error) {
 		cm = cache.NewCacheManager(g, cfg.Cache)
 	}
 	app := NewApplicationWithCache(g, cm)
+	app.Events = NewEventEngine(cfg.Watch.QueueSize)
+	app.Daemon = NewDaemon(app, daemonConfigFromConfig(*cfg))
+	if cfg.Watch.Enabled {
+		app.Daemon.Start()
+	}
 	// Wire verification config from the yaml config (field-by-field to avoid import cycle).
 	vc := cfg.Verification
 	app.Verify = NewVerificationRunService(VerificationConfig{
@@ -91,6 +99,31 @@ func ApplicationFromConfig(cfg *config.Config) (*Application, error) {
 		MaxOutputBytes:     vc.MaxOutputBytes,
 	}, g)
 	return app, nil
+}
+
+func daemonConfigFromConfig(cfg config.Config) DaemonConfig {
+	roots := append([]string(nil), cfg.Watch.ProjectRoots...)
+	if len(roots) == 0 {
+		for _, project := range cfg.Projects {
+			if project.Path != "" {
+				roots = append(roots, project.Path)
+			}
+		}
+	}
+	if len(roots) == 0 {
+		roots = []string{"."}
+	}
+	return DaemonConfig{
+		ProjectDetectInterval: cfg.Watch.IntervalDuration(),
+		IndexInterval:         cfg.Watch.IndexIntervalDuration(),
+		IndexOnChange:         cfg.Watch.IndexOnChange,
+		MaxBackgroundJobs:     cfg.Watch.MaxWorkers,
+		MaxWatchDirs:          cfg.Watch.MaxWatchDirs,
+		ProjectScanDepth:      cfg.Watch.ProjectScanDepth,
+		Roots:                 roots,
+		IndexIncremental:      cfg.Indexing.Incremental,
+		IndexIgnore:           cfg.Indexing.Ignore,
+	}
 }
 
 func ApplicationInMemory() *Application {

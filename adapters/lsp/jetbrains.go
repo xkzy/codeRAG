@@ -84,7 +84,7 @@ func (c *JetBrainsClient) GetCompletions(ctx context.Context, uri string, line, 
 		"method":  "textDocument/completion",
 		"params": map[string]any{
 			"textDocument": map[string]any{"uri": uri},
-			"position":    map[string]any{"line": line, "character": character},
+			"position":     map[string]any{"line": line, "character": character},
 		},
 	}
 	raw, err := c.sendMessageWithResult(msg)
@@ -105,7 +105,7 @@ func (c *JetBrainsClient) GetHover(ctx context.Context, uri string, line, charac
 		"method":  "textDocument/hover",
 		"params": map[string]any{
 			"textDocument": map[string]any{"uri": uri},
-			"position":    map[string]any{"line": line, "character": character},
+			"position":     map[string]any{"line": line, "character": character},
 		},
 	}
 	raw, err := c.sendMessageWithResult(msg)
@@ -126,7 +126,7 @@ func (c *JetBrainsClient) GetDefinition(ctx context.Context, uri string, line, c
 		"method":  "textDocument/definition",
 		"params": map[string]any{
 			"textDocument": map[string]any{"uri": uri},
-			"position":    map[string]any{"line": line, "character": character},
+			"position":     map[string]any{"line": line, "character": character},
 		},
 	}
 	raw, err := c.sendMessageWithResult(msg)
@@ -147,7 +147,7 @@ func (c *JetBrainsClient) GetReferences(ctx context.Context, uri string, line, c
 		"method":  "textDocument/references",
 		"params": map[string]any{
 			"textDocument": map[string]any{"uri": uri},
-			"position":    map[string]any{"line": line, "character": character},
+			"position":     map[string]any{"line": line, "character": character},
 		},
 	}
 	raw, err := c.sendMessageWithResult(msg)

@@ -16,6 +16,8 @@ const usage = `codergag - shared code knowledge graph for LLM agents
 
 Usage:
   codergag [serve]                 run the MCP server on stdio (default)
+  codergag watch [--interval 1s]   live daemon status on stderr (indexes as files change)
+  codergag http [--addr :8080]     local agent/memory dashboard
   codergag status [--json]         health, usage and token-savings report
   codergag eval -project ID [--json]   score retrieval, resolution, freshness, memory
   codergag maintenance             run the optimization pass once
@@ -51,6 +53,10 @@ func main() {
 	switch cmd {
 	case "serve":
 		serve(app)
+	case "http":
+		runHTTP(app, args)
+	case "watch":
+		os.Exit(runWatch(app, args))
 	case "status":
 		os.Exit(runStatus(app, args))
 	case "eval":
@@ -86,6 +92,12 @@ func serve(app *services.Application) {
 
 	shutdown := func() {
 		stopMaintenance()
+		if app.Daemon != nil {
+			app.Daemon.Stop()
+		}
+		if app.Events != nil {
+			app.Events.Stop()
+		}
 		reg.FlushUsage()
 		if err := app.Graph.Close(); err != nil {
 			fmt.Fprintln(os.Stderr, "close:", err)
@@ -103,5 +115,17 @@ func serve(app *services.Application) {
 	shutdown()
 	if err != nil {
 		fail("server:", err)
+	}
+}
+
+func runHTTP(app *services.Application, args []string) {
+	addr := ":8080"
+	if len(args) > 0 {
+		addr = args[0]
+	}
+	srv := services.NewHTTPServer(app, addr)
+	fmt.Fprintf(os.Stderr, "agent view at http://%s\n", addr)
+	if err := srv.ListenAndServe(); err != nil {
+		fail("http:", err)
 	}
 }

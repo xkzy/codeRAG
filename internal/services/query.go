@@ -173,8 +173,8 @@ func (s *CodeGraphService) Impact(nodeID string, depth, limit int) (map[string]a
 // of functions through which data flows.
 func (s *CodeGraphService) TraceDataFlow(sourceID, targetID string, maxDepth int, includeCalls bool) (map[string]any, error) {
 	type item struct {
-		id   string
-		path []string
+		id    string
+		path  []string
 		kinds []string
 	}
 	queue := []item{{sourceID, []string{sourceID}, nil}}

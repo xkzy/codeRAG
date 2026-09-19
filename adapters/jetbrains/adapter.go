@@ -40,12 +40,12 @@ func (p *JetBrainsPlugin) Convert(ctx context.Context, input any) (*NormalizedJe
 
 // NormalizedJetBrainsState is the normalized output from a JetBrains plugin.
 type NormalizedJetBrainsState struct {
-	Plugin     string            `json:"plugin"`
-	IDE        string            `json:"ide"`
-	ProjectID  string            `json:"project_id"`
-	ActiveFile *ActiveFileInfo   `json:"active_file"`
-	Selections []SelectionInfo   `json:"selections"`
-	Diagnostics []DiagnosticInfo  `json:"diagnostics"`
+	Plugin      string           `json:"plugin"`
+	IDE         string           `json:"ide"`
+	ProjectID   string           `json:"project_id"`
+	ActiveFile  *ActiveFileInfo  `json:"active_file"`
+	Selections  []SelectionInfo  `json:"selections"`
+	Diagnostics []DiagnosticInfo `json:"diagnostics"`
 }
 
 // ActiveFileInfo represents the currently active file in JetBrains.

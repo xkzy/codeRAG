@@ -172,7 +172,7 @@ type VectorRanker struct {
 	K1 float64 // boost for exact term matches within the vector space
 }
 
-func NewVectorRanker() *VectorRanker { return &VectorRanker{K1: 1.0 } }
+func NewVectorRanker() *VectorRanker { return &VectorRanker{K1: 1.0} }
 
 func (v *VectorRanker) Rank(query string, docs []Document, limit int) []Hit {
 	qVec := docVector(Tokenize(query))

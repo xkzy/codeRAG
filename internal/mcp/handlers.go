@@ -453,9 +453,9 @@ func (r *ToolRegistry) handleRecordRuntimeTrace(args map[string]any) (map[string
 			}
 		}
 		trace.Instructions = append(trace.Instructions, reverse.TraceInstruction{
-			Address:  getString(m, "address"),
-			Mnemonic: getString(m, "mnemonic"),
-			Operands: getString(m, "operands"),
+			Address:   getString(m, "address"),
+			Mnemonic:  getString(m, "mnemonic"),
+			Operands:  getString(m, "operands"),
 			Registers: regs,
 		})
 	}
@@ -492,14 +492,14 @@ func (r *ToolRegistry) handleRecordHypothesis(args map[string]any) (map[string]a
 		return nil, fmt.Errorf("hypothesis object is required")
 	}
 	hyp := reverse.Hypothesis{
-		ID:        getString(raw, "id"),
-		SubjectID: getString(raw, "subject_id"),
-		Claim:     getString(raw, "claim"),
+		ID:         getString(raw, "id"),
+		SubjectID:  getString(raw, "subject_id"),
+		Claim:      getString(raw, "claim"),
 		Confidence: getFloat(raw, "confidence", 0),
-		Status:    getString(raw, "status"),
-		Analyst:   getString(raw, "analyst"),
-		CreatedAt: int64(getInt(raw, "created_at", 0)),
-		UpdatedAt: int64(getInt(raw, "updated_at", 0)),
+		Status:     getString(raw, "status"),
+		Analyst:    getString(raw, "analyst"),
+		CreatedAt:  int64(getInt(raw, "created_at", 0)),
+		UpdatedAt:  int64(getInt(raw, "updated_at", 0)),
 	}
 	evFor, _ := raw["evidence_for"].([]any)
 	for _, e := range evFor {
@@ -723,6 +723,10 @@ func (r *ToolRegistry) handleMemoryCompact(args map[string]any) (map[string]any,
 
 func (r *ToolRegistry) handleIndexMarkdown(args map[string]any) (map[string]any, error) {
 	return r.app.Documents.IndexMarkdown(getString(args, "project_id"), getString(args, "path"))
+}
+
+func (r *ToolRegistry) handleIndexDocument(args map[string]any) (map[string]any, error) {
+	return r.app.Documents.IndexDocument(getString(args, "project_id"), getString(args, "path"))
 }
 
 func (r *ToolRegistry) handleSearchDocs(args map[string]any) (map[string]any, error) {
@@ -962,13 +966,13 @@ func (r *ToolRegistry) handleCacheConfig(args map[string]any) (map[string]any, e
 	}
 	cfg := cm.Config()
 	return map[string]any{"config": map[string]any{
-		"enabled":      cfg.Enabled,
-		"exact":        cfg.Exact,
-		"semantic":     cfg.Semantic,
-		"tool":         cfg.Tool,
-		"analysis":     cfg.Analysis,
-		"ttl_enabled":  cfg.TTL.Enabled,
-		"ttl_seconds":  cfg.TTL.Seconds,
+		"enabled":     cfg.Enabled,
+		"exact":       cfg.Exact,
+		"semantic":    cfg.Semantic,
+		"tool":        cfg.Tool,
+		"analysis":    cfg.Analysis,
+		"ttl_enabled": cfg.TTL.Enabled,
+		"ttl_seconds": cfg.TTL.Seconds,
 	}}, nil
 }
 

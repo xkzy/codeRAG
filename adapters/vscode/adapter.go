@@ -37,17 +37,17 @@ func (e *VSCodeExtension) Convert(ctx context.Context, input any) (*NormalizedVS
 
 // NormalizedVSCodeState is the normalized output from a VS Code extension.
 type NormalizedVSCodeState struct {
-	Extension   string             `json:"extension"`
-	ProjectID   string             `json:"project_id"`
-	ActiveFile  *ActiveFileInfo    `json:"active_file"`
-	Selections  []SelectionInfo    `json:"selections"`
-	Diagnostics []DiagnosticInfo   `json:"diagnostics"`
+	Extension   string           `json:"extension"`
+	ProjectID   string           `json:"project_id"`
+	ActiveFile  *ActiveFileInfo  `json:"active_file"`
+	Selections  []SelectionInfo  `json:"selections"`
+	Diagnostics []DiagnosticInfo `json:"diagnostics"`
 }
 
 // ActiveFileInfo represents the currently active file in VS Code.
 type ActiveFileInfo struct {
-	URI     string `json:"uri"`
-	Content string `json:"content"`
+	URI      string `json:"uri"`
+	Content  string `json:"content"`
 	Language string `json:"language"`
 }
 

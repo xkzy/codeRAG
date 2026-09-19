@@ -16,26 +16,26 @@ func (IDAAdapter) Name() string { return "ida" }
 
 // IDAExport represents the expected JSON structure from IDA export plugins.
 type IDAExport struct {
-	BinaryID  string          `json:"binary_id"`
-	Path      string          `json:"path"`
-	SHA256    string          `json:"sha256"`
-	Functions []IDAFunction   `json:"functions"`
+	BinaryID  string        `json:"binary_id"`
+	Path      string        `json:"path"`
+	SHA256    string        `json:"sha256"`
+	Functions []IDAFunction `json:"functions"`
 }
 
 // IDAFunction represents a function in IDA export.
 type IDAFunction struct {
-	Address          string             `json:"address"`
-	Name             string             `json:"name"`
-	Size             int                `json:"size,omitempty"`
-	Calls            []string           `json:"calls,omitempty"`
-	Strings          []string           `json:"strings,omitempty"`
-	DecompilerOutput string             `json:"decompiler_output,omitempty"`
-	BasicBlocks      []IDABasicBlock    `json:"basic_blocks,omitempty"`
+	Address          string          `json:"address"`
+	Name             string          `json:"name"`
+	Size             int             `json:"size,omitempty"`
+	Calls            []string        `json:"calls,omitempty"`
+	Strings          []string        `json:"strings,omitempty"`
+	DecompilerOutput string          `json:"decompiler_output,omitempty"`
+	BasicBlocks      []IDABasicBlock `json:"basic_blocks,omitempty"`
 }
 
 // IDABasicBlock represents a basic block in IDA export.
 type IDABasicBlock struct {
-	Address     string            `json:"address"`
+	Address     string           `json:"address"`
 	Instruction []IDAInstruction `json:"instructions,omitempty"`
 }
 

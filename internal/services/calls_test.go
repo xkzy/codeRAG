@@ -114,7 +114,7 @@ func TestResolveCallsBareNameFallback(t *testing.T) {
 func TestCalleeQualifiedName(t *testing.T) {
 	cases := []struct {
 		name, suffix, src, caller string
-		wantIncludes               string // one of the recorded calls must include this string
+		wantIncludes              string // one of the recorded calls must include this string
 	}{
 		{
 			"go_method", ".go",

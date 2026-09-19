@@ -28,54 +28,54 @@ const (
 )
 
 type CacheConfig struct {
-	Enabled      bool               `yaml:"enabled"`
-	Exact        LevelConfig        `yaml:"exact"`
-	Semantic     SemanticConfig     `yaml:"semantic"`
-	Tool         LevelConfig        `yaml:"tool"`
-	Analysis     LevelConfig        `yaml:"analysis"`
-	LLM          LLMCacheConfig     `yaml:"llm"`
-	TTL          TTLConfig          `yaml:"ttl"`
-	Invalidation InvalidationConfig `yaml:"invalidation"`
-	Concurrency  ConcurrencyConfig  `yaml:"concurrency"`
-	Privacy      PrivacyConfig      `yaml:"privacy"`
+	Enabled      bool               `yaml:"enabled" xml:"enabled"`
+	Exact        LevelConfig        `yaml:"exact" xml:"exact"`
+	Semantic     SemanticConfig     `yaml:"semantic" xml:"semantic"`
+	Tool         LevelConfig        `yaml:"tool" xml:"tool"`
+	Analysis     LevelConfig        `yaml:"analysis" xml:"analysis"`
+	LLM          LLMCacheConfig     `yaml:"llm" xml:"llm"`
+	TTL          TTLConfig          `yaml:"ttl" xml:"ttl"`
+	Invalidation InvalidationConfig `yaml:"invalidation" xml:"invalidation"`
+	Concurrency  ConcurrencyConfig  `yaml:"concurrency" xml:"concurrency"`
+	Privacy      PrivacyConfig      `yaml:"privacy" xml:"privacy"`
 }
 
 type LevelConfig struct {
-	Enabled bool `yaml:"enabled"`
+	Enabled bool `yaml:"enabled" xml:"enabled"`
 }
 
 type SemanticConfig struct {
-	Enabled    bool    `yaml:"enabled"`
-	Threshold  float64 `yaml:"threshold"`
-	MaxResults int     `yaml:"max_results"`
+	Enabled    bool    `yaml:"enabled" xml:"enabled"`
+	Threshold  float64 `yaml:"threshold" xml:"threshold"`
+	MaxResults int     `yaml:"max_results" xml:"max_results"`
 }
 
 type LLMCacheConfig struct {
-	Enabled        bool `yaml:"enabled"`
-	CacheResponses bool `yaml:"cache_responses"`
+	Enabled        bool `yaml:"enabled" xml:"enabled"`
+	CacheResponses bool `yaml:"cache_responses" xml:"cache_responses"`
 }
 
 type TTLConfig struct {
-	Enabled bool `yaml:"enabled"`
-	Seconds int  `yaml:"seconds"`
+	Enabled bool `yaml:"enabled" xml:"enabled"`
+	Seconds int  `yaml:"seconds" xml:"seconds"`
 }
 
 type InvalidationConfig struct {
-	Git         bool `yaml:"git"`
-	BinaryHash  bool `yaml:"binary_hash"`
-	Dependency  bool `yaml:"dependency"`
-	ToolVersion bool `yaml:"tool_version"`
+	Git         bool `yaml:"git" xml:"git"`
+	BinaryHash  bool `yaml:"binary_hash" xml:"binary_hash"`
+	Dependency  bool `yaml:"dependency" xml:"dependency"`
+	ToolVersion bool `yaml:"tool_version" xml:"tool_version"`
 }
 
 type ConcurrencyConfig struct {
-	PreventDuplicateWork bool `yaml:"prevent_duplicate_work"`
+	PreventDuplicateWork bool `yaml:"prevent_duplicate_work" xml:"prevent_duplicate_work"`
 }
 
 type PrivacyConfig struct {
-	CacheLLMResponses  bool `yaml:"cache_llm_responses"`
-	CacheSourceContent bool `yaml:"cache_source_content"`
-	CacheBinaryContent bool `yaml:"cache_binary_content"`
-	CacheToolResults   bool `yaml:"cache_tool_results"`
+	CacheLLMResponses  bool `yaml:"cache_llm_responses" xml:"cache_llm_responses"`
+	CacheSourceContent bool `yaml:"cache_source_content" xml:"cache_source_content"`
+	CacheBinaryContent bool `yaml:"cache_binary_content" xml:"cache_binary_content"`
+	CacheToolResults   bool `yaml:"cache_tool_results" xml:"cache_tool_results"`
 }
 
 func DefaultConfig() CacheConfig {

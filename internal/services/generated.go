@@ -18,7 +18,7 @@ var (
 // its name and by markers in its first lines. Generated code is still indexed
 // (callers and inheritance stay accurate) but flagged so searches can hide it.
 func isGenerated(path, content string) bool {
-	if generatedNameRe.MatchString(filepath.Base(path)) {
+	if isGeneratedName(path) {
 		return true
 	}
 	head := content
@@ -30,4 +30,8 @@ func isGenerated(path, content string) bool {
 		head = head[:2048]
 	}
 	return generatedMarkerRe.MatchString(head)
+}
+
+func isGeneratedName(path string) bool {
+	return generatedNameRe.MatchString(filepath.Base(path))
 }

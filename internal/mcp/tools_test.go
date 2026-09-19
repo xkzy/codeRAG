@@ -70,13 +70,13 @@ func TestClientsShareGraphAndIsolateProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := first.Call("record_re_hypothesis", map[string]any{"project_id": "private", "hypothesis": map[string]any{
-		"id":          "h1",
-		"subject_id":  node.ID,
-		"claim":       "shared memory",
-		"confidence":  0.5,
-		"status":      "active",
-		"analyst":     "client-one",
-		"evidence_for": []any{},
+		"id":               "h1",
+		"subject_id":       node.ID,
+		"claim":            "shared memory",
+		"confidence":       0.5,
+		"status":           "active",
+		"analyst":          "client-one",
+		"evidence_for":     []any{},
 		"evidence_against": []any{},
 	}}); err != nil {
 		t.Fatal(err)
@@ -806,10 +806,10 @@ func TestResolveInstructionBasicBlock(t *testing.T) {
 	// Create a binary with basic blocks and instructions manually
 	binaryID := "binary:test"
 	_, err = g.UpsertNode("Binary", map[string]any{"project_id": projectID, "stable_id": binaryID}, map[string]any{
-		"name":        "test.bin",
-		"path":        "/tmp/test.bin",
+		"name":         "test.bin",
+		"path":         "/tmp/test.bin",
 		"architecture": "x86_64",
-		"hash":        "abc123",
+		"hash":         "abc123",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -818,8 +818,8 @@ func TestResolveInstructionBasicBlock(t *testing.T) {
 	// Create a binary function
 	fnID := ids.BinFuncID(binaryID, "0x401000")
 	_, err = g.UpsertNode("BinaryFunction", map[string]any{"project_id": projectID, "stable_id": fnID}, map[string]any{
-		"name":    "main",
-		"address": "0x401000",
+		"name":      "main",
+		"address":   "0x401000",
 		"binary_id": binaryID,
 	})
 	if err != nil {
@@ -829,10 +829,10 @@ func TestResolveInstructionBasicBlock(t *testing.T) {
 	// Create a basic block
 	bbID := ids.BasicBlockID(binaryID, "0x401000", "0x401000")
 	bbNode, err := g.UpsertNode("BasicBlock", map[string]any{"project_id": projectID, "stable_id": bbID}, map[string]any{
-		"address":      "0x401000",
-		"function_id":  fnID,
-		"binary_id":    binaryID,
-		"size":         16,
+		"address":     "0x401000",
+		"function_id": fnID,
+		"binary_id":   binaryID,
+		"size":        16,
 	})
 	if err != nil {
 		t.Fatal(err)

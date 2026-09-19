@@ -16,21 +16,21 @@ func (GDBAdapter) Name() string { return "gdb" }
 
 // GDBExport represents the expected JSON structure from GDB Python script export.
 type GDBExport struct {
-	BinaryID  string         `json:"binary_id"`
-	Path      string         `json:"path"`
-	SHA256    string         `json:"sha256"`
-	Functions []GDBFunction  `json:"functions"`
+	BinaryID  string        `json:"binary_id"`
+	Path      string        `json:"path"`
+	SHA256    string        `json:"sha256"`
+	Functions []GDBFunction `json:"functions"`
 }
 
 // GDBFunction represents a function in GDB export.
 type GDBFunction struct {
-	Address          string            `json:"address"`
-	Name             string            `json:"name"`
-	Size             int               `json:"size,omitempty"`
-	Calls            []string          `json:"calls,omitempty"`
-	Strings          []string          `json:"strings,omitempty"`
-	DecompilerOutput string            `json:"decompiler_output,omitempty"`
-	BasicBlocks      []GDBBasicBlock   `json:"basic_blocks,omitempty"`
+	Address          string          `json:"address"`
+	Name             string          `json:"name"`
+	Size             int             `json:"size,omitempty"`
+	Calls            []string        `json:"calls,omitempty"`
+	Strings          []string        `json:"strings,omitempty"`
+	DecompilerOutput string          `json:"decompiler_output,omitempty"`
+	BasicBlocks      []GDBBasicBlock `json:"basic_blocks,omitempty"`
 }
 
 // GDBBasicBlock represents a basic block in GDB export.

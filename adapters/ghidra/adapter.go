@@ -16,10 +16,10 @@ func (GhidraAdapter) Name() string { return "ghidra" }
 
 // GhidraExport represents the expected JSON structure from Ghidra headless export.
 type GhidraExport struct {
-	BinaryID   string          `json:"binary_id"`
-	Path       string          `json:"path"`
-	SHA256     string          `json:"sha256"`
-	Functions  []GhidraFunction `json:"functions"`
+	BinaryID  string           `json:"binary_id"`
+	Path      string           `json:"path"`
+	SHA256    string           `json:"sha256"`
+	Functions []GhidraFunction `json:"functions"`
 }
 
 // GhidraFunction represents a function in Ghidra export.
@@ -35,7 +35,7 @@ type GhidraFunction struct {
 
 // GhidraBasicBlock represents a basic block in Ghidra export.
 type GhidraBasicBlock struct {
-	Address     string               `json:"address"`
+	Address     string              `json:"address"`
 	Instruction []GhidraInstruction `json:"instructions,omitempty"`
 }
 

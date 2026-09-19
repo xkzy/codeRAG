@@ -108,8 +108,8 @@ func (s *ReverseEngineeringService) ImportBinary(projectID string, data reverse.
 					"binary_id":  data.BinaryID,
 					"address":    insn.Address,
 				}, map[string]any{
-					"mnemonic": insn.Mnemonic,
-					"operands": insn.Operands,
+					"mnemonic":  insn.Mnemonic,
+					"operands":  insn.Operands,
 					"stable_id": ids.InstructionID(data.BinaryID, item.Address, bb.Address, insn.Address),
 				})
 				if err != nil {
@@ -128,8 +128,8 @@ func (s *ReverseEngineeringService) ImportBinary(projectID string, data reverse.
 					})
 					if err == nil {
 						s.graph.Link("REFERENCES_DATA", insnNode.ID, dataNode.ID, map[string]any{
-							"type":  dref.Type,
-							"size":  dref.Size,
+							"type":   dref.Type,
+							"size":   dref.Size,
 							"source": data.Tool,
 						})
 					}
@@ -163,8 +163,8 @@ func (s *ReverseEngineeringService) ImportBinary(projectID string, data reverse.
 				})
 				if err == nil {
 					s.graph.Link("REFERENCES_DATA", callerFn.ID, dataNode.ID, map[string]any{
-						"type":  dref.Type,
-						"size":  dref.Size,
+						"type":   dref.Type,
+						"size":   dref.Size,
 						"source": data.Tool,
 					})
 				}
@@ -281,8 +281,8 @@ func (s *ReverseEngineeringService) RecordRuntimeTrace(projectID string, trace r
 			"trace_id":   trace.TraceID,
 			"address":    insn.Address,
 		}, map[string]any{
-			"mnemonic": insn.Mnemonic,
-			"operands": insn.Operands,
+			"mnemonic":  insn.Mnemonic,
+			"operands":  insn.Operands,
 			"registers": insn.Registers,
 		})
 		if err == nil {
@@ -324,16 +324,16 @@ func (s *ReverseEngineeringService) RecordRuntimeTrace(projectID string, trace r
 // RecordHypothesis stores a competing hypothesis for reverse engineering.
 func (s *ReverseEngineeringService) RecordHypothesis(projectID string, hypothesis reverse.Hypothesis) (map[string]any, error) {
 	hypNode, err := s.graph.UpsertNode("Hypothesis", map[string]any{
-		"project_id": projectID,
+		"project_id":    projectID,
 		"hypothesis_id": hypothesis.ID,
 	}, map[string]any{
-		"subject_id":   hypothesis.SubjectID,
-		"claim":        hypothesis.Claim,
-		"confidence":   hypothesis.Confidence,
-		"status":       hypothesis.Status,
-		"analyst":      hypothesis.Analyst,
-		"created_at":   hypothesis.CreatedAt,
-		"updated_at":   hypothesis.UpdatedAt,
+		"subject_id": hypothesis.SubjectID,
+		"claim":      hypothesis.Claim,
+		"confidence": hypothesis.Confidence,
+		"status":     hypothesis.Status,
+		"analyst":    hypothesis.Analyst,
+		"created_at": hypothesis.CreatedAt,
+		"updated_at": hypothesis.UpdatedAt,
 	})
 	if err != nil {
 		return nil, err
@@ -347,7 +347,7 @@ func (s *ReverseEngineeringService) RecordHypothesis(projectID string, hypothesi
 
 	for _, ev := range hypothesis.EvidenceFor {
 		evNode, err := s.graph.UpsertNode("Evidence", map[string]any{
-			"project_id": projectID,
+			"project_id":  projectID,
 			"evidence_id": ev.ID,
 		}, map[string]any{
 			"description": ev.Description,
@@ -361,7 +361,7 @@ func (s *ReverseEngineeringService) RecordHypothesis(projectID string, hypothesi
 
 	for _, ev := range hypothesis.EvidenceAgainst {
 		evNode, err := s.graph.UpsertNode("Evidence", map[string]any{
-			"project_id": projectID,
+			"project_id":  projectID,
 			"evidence_id": ev.ID,
 		}, map[string]any{
 			"description": ev.Description,
@@ -379,7 +379,7 @@ func (s *ReverseEngineeringService) RecordHypothesis(projectID string, hypothesi
 // RecordBehavioralEquivalence records a behavioral equivalence comparison result.
 func (s *ReverseEngineeringService) RecordBehavioralEquivalence(projectID string, equiv reverse.BehavioralEquivalence) (map[string]any, error) {
 	equivNode, err := s.graph.UpsertNode("BehavioralEquivalence", map[string]any{
-		"project_id": projectID,
+		"project_id":         projectID,
 		"binary_function_id": equiv.BinaryFunctionID,
 		"source_function_id": equiv.SourceFunctionID,
 	}, map[string]any{
@@ -398,7 +398,7 @@ func (s *ReverseEngineeringService) RecordBehavioralEquivalence(projectID string
 			"project_id": projectID,
 			"equiv_id":   equiv.BinaryFunctionID + ":" + equiv.SourceFunctionID,
 		}, map[string]any{
-			"input":     tc.Input,
+			"input":      tc.Input,
 			"binary_out": tc.BinaryOut,
 			"source_out": tc.SourceOut,
 			"match":      tc.Match,

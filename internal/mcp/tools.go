@@ -404,6 +404,10 @@ func (r *ToolRegistry) registerAll() {
 		"path": map[string]any{"type": "string", "description": "Markdown file path."},
 	}), append(requiredBase, "path"), r.handleIndexMarkdown)
 
+	r.register("index_document", "Load a PDF, DOC, DOCX, or text document into the graph so LLMs can reference it", baseProps(map[string]any{
+		"path": map[string]any{"type": "string", "description": "Document path to load."},
+	}), append(requiredBase, "path"), r.handleIndexDocument)
+
 	r.register("search_docs", "CodeGraph semantic operation: search docs", baseProps(map[string]any{
 		"query": map[string]any{"type": "string", "description": "Search query."},
 		"limit": map[string]any{"type": "integer", "description": "Maximum results."},
@@ -600,8 +604,8 @@ func (r *ToolRegistry) registerAll() {
 	r.register("list_allowed_verifications", "Verification runner: show which commands and sub-verbs are allowed", map[string]any{}, []string{}, r.handleListAllowedVerifications)
 
 	r.register("sanitize_context", "Privacy: apply the project privacy policy to outbound context. Returns whether transmission is allowed, the sanitized text, redactions, disclosure level and reconstruction risk.", baseProps(map[string]any{
-		"content":    map[string]any{"type": "string", "description": "Context text to sanitize."},
-		"mode":       map[string]any{"type": "string", "description": "Override privacy mode (FULL, MINIMAL, MASKED, STRUCTURAL, ABSTRACT, LOCAL_ONLY)."},
+		"content":     map[string]any{"type": "string", "description": "Context text to sanitize."},
+		"mode":        map[string]any{"type": "string", "description": "Override privacy mode (FULL, MINIMAL, MASKED, STRUCTURAL, ABSTRACT, LOCAL_ONLY)."},
 		"destination": map[string]any{"type": "string", "description": "Destination label for audit."},
 	}), append(requiredBase, "content"), r.handleSanitizeContext)
 
@@ -615,20 +619,20 @@ func (r *ToolRegistry) registerAll() {
 	}), append(requiredBase, "name"), r.handlePseudonymizeSymbol)
 
 	r.register("audit_transmission", "Privacy: audit an outbound transmission against the project policy.", baseProps(map[string]any{
-		"content":    map[string]any{"type": "string", "description": "Content being transmitted."},
+		"content":     map[string]any{"type": "string", "description": "Content being transmitted."},
 		"destination": map[string]any{"type": "string", "description": "Destination label."},
 	}), append(requiredBase, "content", "destination"), r.handleAuditTransmission)
 
 	r.register("privacy_policy", "Privacy: get or set the active privacy policy for a project.", baseProps(map[string]any{
-		"mode":                 map[string]any{"type": "string", "description": "Privacy mode to set."},
-		"allow_exact_source":   map[string]any{"type": "boolean"},
-		"allow_strings":        map[string]any{"type": "boolean"},
-		"max_source_bytes":     map[string]any{"type": "integer"},
-		"max_context_tokens":   map[string]any{"type": "integer"},
-		"allowed_identifiers":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		"mode":                  map[string]any{"type": "string", "description": "Privacy mode to set."},
+		"allow_exact_source":    map[string]any{"type": "boolean"},
+		"allow_strings":         map[string]any{"type": "boolean"},
+		"max_source_bytes":      map[string]any{"type": "integer"},
+		"max_context_tokens":    map[string]any{"type": "integer"},
+		"allowed_identifiers":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		"forbidden_identifiers": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-		"allowed_paths":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-		"forbidden_paths":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		"allowed_paths":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		"forbidden_paths":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 	}), requiredBase, r.handlePrivacyPolicy)
 }
 

@@ -77,7 +77,7 @@ func (c *VSCodeClient) GetCompletions(ctx context.Context, uri string, line, cha
 		"method":  "textDocument/completion",
 		"params": map[string]any{
 			"textDocument": map[string]any{"uri": uri},
-			"position":    map[string]any{"line": line, "character": character},
+			"position":     map[string]any{"line": line, "character": character},
 		},
 	}
 	raw, err := c.sendMessageWithResult(msg)
@@ -98,7 +98,7 @@ func (c *VSCodeClient) GetHover(ctx context.Context, uri string, line, character
 		"method":  "textDocument/hover",
 		"params": map[string]any{
 			"textDocument": map[string]any{"uri": uri},
-			"position":    map[string]any{"line": line, "character": character},
+			"position":     map[string]any{"line": line, "character": character},
 		},
 	}
 	raw, err := c.sendMessageWithResult(msg)
@@ -119,7 +119,7 @@ func (c *VSCodeClient) GetDefinition(ctx context.Context, uri string, line, char
 		"method":  "textDocument/definition",
 		"params": map[string]any{
 			"textDocument": map[string]any{"uri": uri},
-			"position":    map[string]any{"line": line, "character": character},
+			"position":     map[string]any{"line": line, "character": character},
 		},
 	}
 	raw, err := c.sendMessageWithResult(msg)
@@ -140,7 +140,7 @@ func (c *VSCodeClient) GetReferences(ctx context.Context, uri string, line, char
 		"method":  "textDocument/references",
 		"params": map[string]any{
 			"textDocument": map[string]any{"uri": uri},
-			"position":    map[string]any{"line": line, "character": character},
+			"position":     map[string]any{"line": line, "character": character},
 		},
 	}
 	raw, err := c.sendMessageWithResult(msg)

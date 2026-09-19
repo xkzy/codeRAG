@@ -16,26 +16,26 @@ func (LLDBAdapter) Name() string { return "lldb" }
 
 // LLDBExport represents the expected JSON structure from LLDB Python script export.
 type LLDBExport struct {
-	BinaryID  string           `json:"binary_id"`
-	Path      string           `json:"path"`
-	SHA256    string           `json:"sha256"`
-	Functions []LLDBFunction   `json:"functions"`
+	BinaryID  string         `json:"binary_id"`
+	Path      string         `json:"path"`
+	SHA256    string         `json:"sha256"`
+	Functions []LLDBFunction `json:"functions"`
 }
 
 // LLDBFunction represents a function in LLDB export.
 type LLDBFunction struct {
-	Address          string              `json:"address"`
-	Name             string              `json:"name"`
-	Size             int                 `json:"size,omitempty"`
-	Calls            []string            `json:"calls,omitempty"`
-	Strings          []string            `json:"strings,omitempty"`
-	DecompilerOutput string              `json:"decompiler_output,omitempty"`
-	BasicBlocks      []LLDBBasicBlock    `json:"basic_blocks,omitempty"`
+	Address          string           `json:"address"`
+	Name             string           `json:"name"`
+	Size             int              `json:"size,omitempty"`
+	Calls            []string         `json:"calls,omitempty"`
+	Strings          []string         `json:"strings,omitempty"`
+	DecompilerOutput string           `json:"decompiler_output,omitempty"`
+	BasicBlocks      []LLDBBasicBlock `json:"basic_blocks,omitempty"`
 }
 
 // LLDBBasicBlock represents a basic block in LLDB export.
 type LLDBBasicBlock struct {
-	Address     string             `json:"address"`
+	Address     string            `json:"address"`
 	Instruction []LLDBInstruction `json:"instructions,omitempty"`
 }
 
