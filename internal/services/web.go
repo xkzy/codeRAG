@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"sort"
 	"time"
@@ -25,12 +26,26 @@ func NewHTTPServer(app *Application, addr string) *HTTPServer {
 	s.mux.HandleFunc("/api/thoughts", s.handleThoughts)
 	s.mux.HandleFunc("/api/nodes", s.handleNodes)
 	s.mux.HandleFunc("/api/graphify/progress", s.handleGraphifyProgress)
+	s.mux.HandleFunc("/api/graphify/graph.json", s.handleGraphifyGraph)
 	s.mux.HandleFunc("/graphify", s.handleGraphifyPage)
 	return s
 }
 
 func (s *HTTPServer) ListenAndServe() error {
 	return http.ListenAndServe(s.addr, s.mux)
+}
+
+// StartBackground binds the address and serves in a goroutine. It returns the
+// bind error (e.g. another codergag instance already owns the port) so callers
+// can treat it as non-fatal. The returned func stops the listener.
+func (s *HTTPServer) StartBackground() (net.Addr, func(), error) {
+	ln, err := net.Listen("tcp", s.addr)
+	if err != nil {
+		return nil, nil, err
+	}
+	srv := &http.Server{Handler: s.mux}
+	go srv.Serve(ln)
+	return ln.Addr(), func() { srv.Close() }, nil
 }
 
 func (s *HTTPServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -132,6 +147,69 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = enc.Encode(v)
 }
 
+// latestGraphifyRun returns the newest stored GraphifyRun, optionally limited
+// to one project.
+func (s *HTTPServer) latestGraphifyRun(projectID string) map[string]any {
+	filter := map[string]any(nil)
+	if projectID != "" {
+		filter = map[string]any{"project_id": projectID}
+	}
+	nodes, err := s.app.Graph.FindNodes("GraphifyRun", filter)
+	if err != nil {
+		return nil
+	}
+	var best map[string]any
+	for _, n := range nodes {
+		p := Present(n)
+		if best == nil || fmt.Sprint(p["updated_at"]) > fmt.Sprint(best["updated_at"]) {
+			best = p
+		}
+	}
+	return best
+}
+
+// handleGraphifyGraph serves the stored graph for the visualization. The node
+// count is capped (default 1500, most-connected first) so the browser stays
+// responsive on large repositories.
+func (s *HTTPServer) handleGraphifyGraph(w http.ResponseWriter, r *http.Request) {
+	run := s.latestGraphifyRun(r.URL.Query().Get("project_id"))
+	if run == nil {
+		writeJSON(w, map[string]any{"nodes": []any{}, "edges": []any{}})
+		return
+	}
+	var g Graph
+	if err := json.Unmarshal([]byte(fmt.Sprint(run["graph_json"])), &g); err != nil {
+		http.Error(w, "stored graph is unreadable: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	limit := 1500
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	total := len(g.Nodes)
+	if limit > 0 && total > limit {
+		deg := map[string]int{}
+		for _, e := range g.Edges {
+			deg[e.Source]++
+			deg[e.Target]++
+		}
+		sort.SliceStable(g.Nodes, func(i, j int) bool { return deg[g.Nodes[i].ID] > deg[g.Nodes[j].ID] })
+		g.Nodes = g.Nodes[:limit]
+		keep := make(map[string]bool, limit)
+		for _, n := range g.Nodes {
+			keep[n.ID] = true
+		}
+		edges := g.Edges[:0:0]
+		for _, e := range g.Edges {
+			if keep[e.Source] && keep[e.Target] {
+				edges = append(edges, e)
+			}
+		}
+		g.Edges = edges
+	}
+	writeJSON(w, map[string]any{"nodes": g.Nodes, "edges": g.Edges, "total_nodes": total})
+}
+
 func (s *HTTPServer) handleGraphifyProgress(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -149,6 +227,13 @@ func (s *HTTPServer) handleGraphifyProgress(w http.ResponseWriter, r *http.Reque
 			return
 		case <-ticker.C:
 			p := globalProgress.Snapshot()
+			if p.StartedAt.IsZero() {
+				// This process has not indexed anything; report the last stored run.
+				if run := s.latestGraphifyRun(""); run != nil {
+					p.Phase, p.Done = "last run", true
+					p.Nodes, p.Edges, p.Communities = toInt(run["nodes"]), toInt(run["edges"]), toInt(run["communities"])
+				}
+			}
 			data, _ := json.Marshal(p)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
@@ -309,3 +394,15 @@ window.addEventListener("resize", () => {
 </script>
 </body>
 </html>`
+
+func toInt(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	}
+	return 0
+}

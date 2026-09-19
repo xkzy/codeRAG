@@ -24,6 +24,7 @@ Usage:
 
 Environment:
   CODERAG_CONFIG                   path to config yaml
+  CODERAG_HTTP_ADDR                also serve the dashboard from serve (e.g. 127.0.0.1:8080)
   CODERAG_MAINTENANCE_INTERVAL     scheduled optimization period (default 15m, 0 disables)
 `
 
@@ -45,6 +46,7 @@ func main() {
 		}
 		cfg = loaded
 	}
+	cfg = configForCommand(cmd, cfg)
 	app, err := services.ApplicationFromConfig(&cfg)
 	if err != nil {
 		fail("init:", err)
@@ -69,6 +71,17 @@ func main() {
 	}
 }
 
+// configForCommand disables the background indexing daemon for read-only
+// commands. Otherwise `http` (often started from an arbitrary cwd such as
+// $HOME) would scan and index the default watch root "." and exhaust memory.
+func configForCommand(cmd string, cfg config.Config) config.Config {
+	switch cmd {
+	case "http", "status", "eval", "maintenance":
+		cfg.Watch.Enabled = false
+	}
+	return cfg
+}
+
 func fail(msg string, err error) {
 	fmt.Fprintln(os.Stderr, msg, err)
 	os.Exit(1)
@@ -89,6 +102,17 @@ func serve(app *services.Application) {
 		interval = d
 	}
 	stopMaintenance := reg.StartMaintenance(interval)
+
+	// Optional dashboard. Several serve processes may share one port; the first
+	// wins and the rest continue without it.
+	if addr := os.Getenv("CODERAG_HTTP_ADDR"); addr != "" {
+		if bound, stop, err := services.NewHTTPServer(app, addr).StartBackground(); err != nil {
+			fmt.Fprintln(os.Stderr, "dashboard not started:", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "dashboard at http://%s\n", bound)
+			defer stop()
+		}
+	}
 
 	shutdown := func() {
 		stopMaintenance()

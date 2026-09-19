@@ -98,3 +98,72 @@ func TestHTTPServerDashboard(t *testing.T) {
 		t.Fatal("dashboard missing title")
 	}
 }
+
+func TestHTTPServerStartBackgroundSharedPort(t *testing.T) {
+	app := ApplicationInMemory()
+	first := NewHTTPServer(app, "127.0.0.1:0")
+	addr, stop, err := first.StartBackground()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	resp, err := http.Get("http://" + addr.String() + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	// A second instance on the same port must report an error, not panic.
+	if _, _, err := NewHTTPServer(app, addr.String()).StartBackground(); err == nil {
+		t.Fatal("expected bind error on occupied port")
+	}
+}
+
+func TestHTTPServerGraphifyGraphAndIdleProgress(t *testing.T) {
+	app := ApplicationInMemory()
+	g := Graph{
+		Nodes: []Node{{ID: "a", Label: "a"}, {ID: "b", Label: "b"}, {ID: "c", Label: "c"}},
+		Edges: []Edge{{Source: "a", Target: "b"}, {Source: "a", Target: "c"}},
+	}
+	data, _ := json.Marshal(g)
+	app.Graph.UpsertNode("GraphifyRun", map[string]any{"project_id": "p"}, map[string]any{
+		"graph_json": string(data), "nodes": 3, "edges": 2, "communities": 1,
+	})
+	ts := httptest.NewServer(NewHTTPServer(app, ":0").mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/graphify/graph.json?limit=2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Nodes      []Node `json:"nodes"`
+		Edges      []Edge `json:"edges"`
+		TotalNodes int    `json:"total_nodes"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Nodes) != 2 || out.TotalNodes != 3 || out.Nodes[0].ID != "a" {
+		t.Fatalf("expected 2 capped nodes led by most-connected 'a', got %+v", out)
+	}
+	for _, e := range out.Edges {
+		if e.Source == "c" || e.Target == "c" {
+			t.Fatalf("edge references dropped node: %+v", e)
+		}
+	}
+
+	sse, err := http.Get(ts.URL + "/api/graphify/progress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sse.Body.Close()
+	buf := make([]byte, 512)
+	n, _ := sse.Body.Read(buf)
+	if !strings.Contains(string(buf[:n]), `"nodes":3`) {
+		t.Fatalf("idle progress should report last stored run: %s", buf[:n])
+	}
+}
