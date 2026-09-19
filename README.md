@@ -6,6 +6,32 @@ It supports code intelligence (incremental indexing, symbols, imports, calls, im
 
 A multi-level persistent cache (exact, semantic, tool result, analysis artifact) prevents redundant LLM calls and expensive re-analysis across agents.
 
+## Comparison
+
+| Feature | **codeRAG** | **Sourcegraph** | **CodeGraph / GraphCode** | **FalkorDB** | **codegraph-mcp** |
+|---------|-------------|-----------------|---------------------------|--------------|-------------------|
+| **Type** | Local MCP server | Cloud SaaS + self-hosted | Research prototypes | Graph DB (Redis module) | MCP wrapper |
+| **Deployment** | Single binary, SQLite | Kubernetes/Docker | Python/Neo4j | Docker/Redis | Python MCP |
+| **Data locality** | 100% local | Cloud (code leaves) | Local | Local | Local |
+| **Languages** | 7 (Go, Py, JS/TS, Java, Rust, C/C++) | 40+ | Varies | Any (Cypher) | Limited |
+| **Indexing** | Regex incremental | Precise (LSIF/SCIP) | AST-based | Manual | Regex |
+| **Graph** | In-memory + gob persist | Distributed | Neo4j/NetworkX | Property graph (Cypher) | NetworkX |
+| **MCP native** | ✅ Yes | ❌ (API only) | ❌ | ❌ | ✅ Yes |
+| **Binary analysis** | 6 adapters (Ghidra, IDA, etc.) | ❌ | ❌ | ❌ | ❌ |
+| **Privacy firewall** | ✅ Modes + pseudonyms | Enterprise only | ❌ | ❌ | ❌ |
+| **Cache** | Multi-level (L0/L1/L2/L3) | CDN | ❌ | Redis | ❌ |
+| **Benchmarking** | Deterministic (ref/refs/slice/ctx) | ❌ | ❌ | ❌ | ❌ |
+| **License** | MIT | Proprietary | MIT/Apache | AGPL | MIT |
+| **Cost** | Free | $49/user/mo | Free | Free/Commercial | Free |
+
+**Key differentiators for codeRAG:**
+- **Agent-native**: Built as MCP server from ground up
+- **Binary + source unified**: Same graph for source and reverse-engineered binaries
+- **Privacy-first**: Context firewall with pseudonymization before any LLM sees code
+- **No infrastructure**: Single binary + SQLite, runs on laptop
+- **Correctness verification**: Deterministic benchmark suite (reference accuracy, invalid ref rejection, slice arithmetic, context token efficiency)
+- **Compiler-aware cache**: CACHE_HIT/PARTIAL/MISS/STALE with git/binary fingerprint invalidation
+
 ## Install and run
 
 ```bash
@@ -28,11 +54,11 @@ Git/filesystem remains the source of truth for source and binary files. The pers
 ```text
 MCP/CLI -> application services -> GraphRepository -> storage (gob)
                               (memory repository in tests)
-                    |
-              Cache Manager
-                              |
-                    Persistent Knowledge
-                    (graph nodes + cache entries)
+                      |
+                Cache Manager
+                      |
+            Persistent Knowledge
+            (graph nodes + cache entries)
 ```
 
 External analyzers are replaceable adapters. Ghidra, IDA, Binary Ninja, objdump/readelf, GDB, and LLDB are not required for source indexing.
@@ -44,19 +70,19 @@ External analyzers are replaceable adapters. Ghidra, IDA, Binary Ninja, objdump/
                            |
                      Graph (gob)
                            |
-              +------------+------------+
-              |            |            |
-           Facts       Evidence     Hypotheses
-              |            |            |
-              +------------+------------+
+             +-------------+-------------+
+             |            |            |
+          Facts       Evidence     Hypotheses
+             |            |            |
+             +-------------+-------------+
                            |
-                    Analysis Artifacts
+                     Analysis Artifacts
                            |
-                    Tool Result Cache
+                     Tool Result Cache
                            |
-                    Semantic Cache
+                     Semantic Cache
                            |
-                      Exact Cache
+                       Exact Cache
                            |
                            LLM
 ```
