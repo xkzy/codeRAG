@@ -94,8 +94,45 @@ func TestHTTPServerDashboard(t *testing.T) {
 		t.Fatalf("status: %d", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "Agent View") {
-		t.Fatal("dashboard missing title")
+	if !strings.Contains(string(body), "codeRAG") {
+		t.Fatal("unified page missing codeRAG title")
+	}
+}
+
+func TestHTTPServerGraphifyRedirects(t *testing.T) {
+	app := ApplicationInMemory()
+	srv := NewHTTPServer(app, ":0")
+	ts := httptest.NewServer(srv.mux)
+	defer ts.Close()
+
+	client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err := client.Get(ts.URL + "/graphify")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMovedPermanently {
+		t.Fatalf("expected 301, got %d", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/" {
+		t.Fatalf("expected Location: /, got %s", loc)
+	}
+}
+
+func TestUnifiedHTMLContainsCanvasAndD3(t *testing.T) {
+	if !strings.Contains(unifiedHTML, "<canvas") {
+		t.Error("unifiedHTML must contain a <canvas> element")
+	}
+	if !strings.Contains(unifiedHTML, "d3.v7.min.js") {
+		t.Error("unifiedHTML must load D3")
+	}
+	if !strings.Contains(unifiedHTML, "forceSimulation") {
+		t.Error("unifiedHTML must use d3.forceSimulation")
+	}
+	if !strings.Contains(unifiedHTML, "requestAnimationFrame") {
+		t.Error("unifiedHTML must use requestAnimationFrame for canvas rendering")
 	}
 }
 
