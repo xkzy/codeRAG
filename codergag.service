@@ -1,0 +1,28 @@
+[Unit]
+Description=codeRAG MCP Server
+After=network.target
+
+[Service]
+Type=simple
+User=codergag
+WorkingDirectory=/opt/codergag
+Environment=CODERAG_CONFIG=/etc/codergag/config.yaml
+Environment=CODERAG_MAINTENANCE_INTERVAL=15m
+ExecStart=/opt/codergag/codergag serve
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/codergag
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

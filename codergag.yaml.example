@@ -1,0 +1,92 @@
+# codeRAG production configuration
+# Copy to ~/.codergag.yaml or set CODERAG_CONFIG=/path/to/config.yaml
+
+# Database configuration (for SQLite, only path is used)
+database:
+  host: "localhost"
+  port: 2480
+  database: "codegraph"
+  user: "admin"
+  password: "admin"  # can be set via CODEGRAPH_DB_PASSWORD env var
+  path: ".codergag.db"  # SQLite file path
+
+# Pre-configured projects (optional - can also be added via MCP tools)
+projects:
+  - id: "myproject"
+    name: "My Project"
+    path: "/path/to/source"
+
+# Indexing behavior
+indexing:
+  incremental: true
+  ignore:
+    - ".git"
+    - "build"
+    - "node_modules"
+    - "dist"
+    - "*.min.js"
+    - "*.pb.go"
+    - "vendor"
+
+# Storage backend: "sqlite" or "memory" (default: sqlite)
+storage: "sqlite"
+
+# Multi-level cache configuration
+cache:
+  enabled: true
+  exact:
+    enabled: true
+  semantic:
+    enabled: true
+    threshold: 0.92    # cosine similarity threshold for semantic cache hits
+    max_results: 5
+  tool:
+    enabled: true
+  analysis:
+    enabled: true
+  llm:
+    enabled: true
+    cache_responses: true
+  ttl:
+    enabled: false
+    seconds: 86400    # 24 hours
+  invalidation:
+    git: true
+    binary_hash: true
+    dependency: true
+    tool_version: true
+  concurrency:
+    prevent_duplicate_work: true
+  privacy:
+    cache_llm_responses: true
+    cache_source_content: false
+    cache_binary_content: false
+    cache_tool_results: true
+
+# Verification runner (disabled by default for safety)
+verification:
+  enabled: false
+  allowed_commands:
+    - "go"
+    - "python"
+    - "npm"
+    - "cargo"
+    - "make"
+    - "pytest"
+    - "go test"
+  allowed_subcommands:
+    go:
+      - "test"
+      - "build"
+      - "vet"
+    python:
+      - "-m"
+      - "pytest"
+    npm:
+      - "test"
+      - "run"
+    cargo:
+      - "test"
+      - "check"
+  timeout_seconds: 120
+  max_output_bytes: 65536

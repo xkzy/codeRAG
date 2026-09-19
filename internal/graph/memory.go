@@ -3,7 +3,9 @@ package graph
 import (
 	"errors"
 	"reflect"
+	"sort"
 	"sync"
+	"time"
 
 	"codergag/internal/models"
 )
@@ -41,6 +43,7 @@ func (r *MemoryGraphRepository) UpsertNode(kind string, identity, properties map
 	}
 
 	props := make(map[string]any, len(identity)+len(properties))
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for k, v := range identity {
 		props[k] = v
 	}
@@ -51,7 +54,7 @@ func (r *MemoryGraphRepository) UpsertNode(kind string, identity, properties map
 		props["id"] = r.next()
 	}
 	if _, ok := props["created_at"]; !ok {
-		props = props
+		props["created_at"] = now
 	}
 	if _, ok := props["project_id"]; !ok {
 		props["project_id"] = identity["project_id"]
@@ -94,6 +97,8 @@ func (r *MemoryGraphRepository) findNodesLocked(kind string, filters map[string]
 			results = append(results, node)
 		}
 	}
+	// Map iteration order is random; a stable order keeps paginated queries consistent.
+	sort.Slice(results, func(i, j int) bool { return results[i].ID < results[j].ID })
 	return results
 }
 
@@ -169,6 +174,45 @@ func (r *MemoryGraphRepository) RemoveNodes(nodeIDs []string) error {
 		if idSet[edge.FromID] || idSet[edge.ToID] {
 			delete(r.edges, edgeID)
 		}
+	}
+	return nil
+}
+
+// EdgeRef is a copy of an edge's endpoints, safe to use without holding locks.
+type EdgeRef struct{ From, To string }
+
+// EdgesOfKind lists every edge of one kind in a single pass.
+func (r *MemoryGraphRepository) EdgesOfKind(kind string) []EdgeRef {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []EdgeRef
+	for _, e := range r.edges {
+		if e.Kind == kind {
+			out = append(out, EdgeRef{e.FromID, e.ToID})
+		}
+	}
+	return out
+}
+
+// Counts returns node and edge totals by kind without copying the graph.
+func (r *MemoryGraphRepository) Counts() (nodes, edges map[string]int) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	nodes, edges = map[string]int{}, map[string]int{}
+	for _, n := range r.nodes {
+		nodes[n.Kind]++
+	}
+	for _, e := range r.edges {
+		edges[e.Kind]++
+	}
+	return nodes, edges
+}
+
+func (r *MemoryGraphRepository) RemoveEdges(edgeIDs []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, id := range edgeIDs {
+		delete(r.edges, id)
 	}
 	return nil
 }

@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"codergag/internal/graph"
-	"codergag/internal/models"
 )
 
 type EvidenceService struct {
@@ -56,17 +55,17 @@ func (s *EvidenceService) RecordHypothesis(projectID, subjectID, claim string, c
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	hypothesis, err := s.graph.UpsertNode("Hypothesis", map[string]any{
-		"project_id":  projectID,
-		"subject_id":  subjectID,
-		"claim":       claim,
+		"project_id": projectID,
+		"subject_id": subjectID,
+		"claim":      claim,
 	}, map[string]any{
-		"state":              state,
-		"confidence":         confidence,
-		"confidence_source":  confidenceSource,
-		"analyst":            analyst,
-		"agent":              agent,
-		"method":             method,
-		"timestamp":          now,
+		"state":             state,
+		"confidence":        confidence,
+		"confidence_source": confidenceSource,
+		"analyst":           analyst,
+		"agent":             agent,
+		"method":            method,
+		"timestamp":         now,
 	})
 	if err != nil {
 		return nil, err
@@ -108,7 +107,9 @@ func (s *EvidenceService) RecordEvidence(projectID, subjectID, description strin
 	}
 	confidence := 1.0
 	if o, ok := opts["confidence"]; ok {
-		confidence = o
+		if c, ok := o.(float64); ok {
+			confidence = c
+		}
 	}
 	agent := "unknown"
 	if o, ok := opts["agent"]; ok {

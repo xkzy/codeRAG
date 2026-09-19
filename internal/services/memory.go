@@ -1,17 +1,18 @@
 package services
 
 import (
-	"strings"
-
 	"codergag/internal/graph"
+	"codergag/internal/models"
+	"codergag/internal/search"
 )
 
 type MemoryService struct {
-	graph graph.GraphRepository
+	graph  graph.GraphRepository
+	ranker search.Ranker
 }
 
 func NewMemoryService(g graph.GraphRepository) *MemoryService {
-	return &MemoryService{graph: g}
+	return &MemoryService{graph: g, ranker: search.NewBM25()}
 }
 
 func (s *MemoryService) Store(projectID, title, content string, opts map[string]any) (map[string]any, error) {
@@ -31,36 +32,62 @@ func (s *MemoryService) Store(projectID, title, content string, opts map[string]
 		"project_id": projectID,
 		"title":      title,
 	}, map[string]any{
-		"content":    content,
-		"kind":       kind,
+		"content":      content,
+		"kind":         kind,
 		"agent_source": agent,
-		"source":     source,
+		"source":       source,
+		"archived":     false,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return Present(node), nil
+	ids, names, err := s.linkEntities(projectID, node, title+"\n"+content)
+	if err != nil {
+		return nil, err
+	}
+	node.SetProperty("entity_ids", toAny(ids))
+	node.SetProperty("entities", toAny(names))
+	if _, err := s.graph.UpsertNode("Memory", map[string]any{"project_id": projectID, "title": title},
+		map[string]any{"entity_ids": toAny(ids), "entities": toAny(names)}); err != nil {
+		return nil, err
+	}
+	res := Present(node)
+	if auto, ok := opts["auto_compact"].(bool); !ok || auto {
+		if s.activeLinkedCount(projectID) >= autoCompactThreshold {
+			if stats, err := s.Compact(projectID, 2); err == nil {
+				res["compaction"] = stats
+			}
+		}
+	}
+	return res, nil
 }
 
 func (s *MemoryService) Search(projectID, query string, limit int) ([]map[string]any, error) {
-	q := strings.ToLower(query)
+	return s.SearchAll(projectID, query, limit, false)
+}
+
+// SearchAll searches memories; archived originals (folded into compacted
+// summaries) are skipped unless includeArchived is set.
+func (s *MemoryService) SearchAll(projectID, query string, limit int, includeArchived bool) ([]map[string]any, error) {
 	nodes, err := s.graph.FindNodes("Memory", map[string]any{"project_id": projectID})
 	if err != nil {
 		return nil, err
 	}
-	var results []map[string]any
-	for _, n := range nodes {
-		title, _ := n.Properties["title"].(string)
-		content, _ := n.Properties["content"].(string)
-		combined := strings.ToLower(title + " " + content)
-		if strings.Contains(combined, q) {
-			results = append(results, Present(n))
-			if len(results) >= limit {
-				break
+	if !includeArchived {
+		active := nodes[:0:0]
+		for _, n := range nodes {
+			if !isArchived(n) {
+				active = append(active, n)
 			}
 		}
+		nodes = active
 	}
-	return results, nil
+	return rankNodes(s.ranker, nodes, query, limit, func(n *models.Node) []search.Field {
+		return []search.Field{
+			{Text: strProp(n, "title"), Weight: 3},
+			{Text: strProp(n, "content"), Weight: 1},
+		}
+	}), nil
 }
 
 func (s *MemoryService) Get(projectID, title string) (map[string]any, error) {

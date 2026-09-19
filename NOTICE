@@ -1,0 +1,7 @@
+codeRAG optionally interoperates with concepts and command contracts from
+codegraph-ai/CodeGraph (https://github.com/codegraph-ai/CodeGraph), copyright
+2025-2026 Andrey Vasilevsky, licensed under Apache License 2.0.
+
+No upstream source code is included in this repository at this point. Any
+future copied or derived source must retain its required Apache-2.0 notices
+and identify modified files.

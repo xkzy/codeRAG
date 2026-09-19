@@ -29,6 +29,7 @@ type GraphRepository interface {
 	Link(kind, fromID, toID string, properties map[string]any) (*models.Edge, error)
 	Neighbors(nodeID, edgeKind string, direction Direction) ([]EdgeNode, error)
 	RemoveNodes(nodeIDs []string) error
+	RemoveEdges(edgeIDs []string) error
 	QueryReadonly(query string, params map[string]any) ([]map[string]any, error)
 	Close() error
 }

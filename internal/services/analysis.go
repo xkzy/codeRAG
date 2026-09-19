@@ -2,6 +2,7 @@ package services
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -46,7 +47,7 @@ func (s *AnalysisService) Complexity(projectID, functionID string) (map[string]a
 		}
 	}
 	return map[string]any{
-		"function": map[string]any{"id": fn.ID, "name": fn.Properties["name"]},
+		"function":              map[string]any{"id": fn.ID, "name": fn.Properties["name"]},
 		"cyclomatic_complexity": score,
 		"breakdown":             details,
 		"method":                "bounded lexical analysis",
@@ -210,8 +211,8 @@ func (s *AnalysisService) HotPaths(projectID string, limit int) ([]map[string]an
 			continue
 		}
 		results = append(results, map[string]any{
-			"function":             Present(node),
-			"transitive_callers":   sorted[i].count,
+			"function":           Present(node),
+			"transitive_callers": sorted[i].count,
 		})
 	}
 	return results, nil
@@ -244,8 +245,8 @@ func (s *AnalysisService) DeadImports(projectID string, limit int) ([]map[string
 				count := len(regexp.MustCompile(`\b`+regexp.QuoteMeta(short)+`\b`).FindAllString(content, -1))
 				if count <= 1 {
 					results = append(results, map[string]any{
-						"source":  path,
-						"module":  en.Node.Properties["name"],
+						"source": path,
+						"module": en.Node.Properties["name"],
 					})
 				}
 			}
@@ -348,18 +349,45 @@ func (s *AnalysisService) EntryPoints(projectID string, limit int) ([]map[string
 	return results, nil
 }
 
+// isTestPath recognises test files by convention, judged on the path relative
+// to the project root so a parent directory named "tests" does not count.
+func isTestPath(rel string) bool {
+	rel = filepath.ToSlash(rel)
+	base := strings.ToLower(filepath.Base(rel))
+	switch {
+	case strings.HasSuffix(base, "_test.go"), strings.HasSuffix(base, "_test.py"), strings.HasPrefix(base, "test_"),
+		strings.Contains(base, ".test."), strings.Contains(base, ".spec."),
+		strings.HasSuffix(base, "test.java"), strings.HasSuffix(base, "tests.java"), strings.HasPrefix(base, "test") && strings.HasSuffix(base, ".java"),
+		strings.HasSuffix(base, "_test.rs"), strings.HasSuffix(base, "_test.cc"), strings.HasSuffix(base, "_test.cpp"), strings.HasSuffix(base, "_test.c"):
+		return true
+	}
+	for _, part := range strings.Split(strings.ToLower(filepath.Dir(rel)), "/") {
+		if part == "test" || part == "tests" || part == "__tests__" || part == "spec" {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *AnalysisService) RelatedTests(projectID, functionName string, limit int) ([]map[string]any, error) {
 	fns, err := s.graph.FindNodes("Function", map[string]any{"project_id": projectID})
 	if err != nil {
 		return nil, err
+	}
+	root := ""
+	if ps, _ := s.graph.FindNodes("Project", map[string]any{"id": projectID}); len(ps) > 0 {
+		root, _ = ps[0].Properties["path"].(string)
 	}
 	fn := strings.ToLower(functionName)
 	var results []map[string]any
 	for _, n := range fns {
 		path, _ := n.Properties["path"].(string)
 		name, _ := n.Properties["name"].(string)
-		if (strings.Contains(strings.ToLower(path), "test") || strings.HasPrefix(name, "test_")) &&
-			strings.Contains(strings.ToLower(name), fn) {
+		rel := path
+		if r, err := filepath.Rel(root, path); err == nil && root != "" {
+			rel = r
+		}
+		if (isTestPath(rel) || strings.HasPrefix(name, "test_")) && strings.Contains(strings.ToLower(name), fn) {
 			results = append(results, Present(n))
 			if len(results) >= limit {
 				break

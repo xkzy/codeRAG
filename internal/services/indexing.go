@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"codergag/internal/graph"
+	"codergag/internal/ids"
 	"codergag/internal/models"
 )
 
@@ -24,14 +26,14 @@ var (
 	}
 
 	genericFuncRe = regexp.MustCompile(`(?:^|\n)\s*(?:pub\s+|static\s+|async\s+|def\s+)?(?:[\w:<>,~*&\[\]\s]+\s+)?([A-Za-z_]\w*)\s*\(([^;{}]*)\)\s*(?:->\s*[\w:<>]+)?\s*(?:\{|:)`)
-	pyFuncRe    = regexp.MustCompile(`^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)`, regexp.Multiline)
-	jsFuncRe    = regexp.MustCompile(`^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?\(([^)]*)\)\s*=>|^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)`, regexp.Multiline)
-	goFuncRe    = regexp.MustCompile(`^\s*func\s+(?:\([^)]*\)\s+)?([A-Za-z_]\w*)\s*\(([^)]*)\)`, regexp.Multiline)
-	rustFuncRe  = regexp.MustCompile(`^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)\s*(?:<[^>]+>)?\s*\(([^)]*)\)`, regexp.Multiline)
-	javaFuncRe  = regexp.MustCompile(`^\s*(?:public|private|protected|static|final|synchronized|abstract|native|\s)+[\w<>\[\], ?]+\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:throws[^\{]+)?\{`, regexp.Multiline)
-	typeRe      = regexp.MustCompile(`^\s*(?:class|struct|enum|interface)\s+([A-Za-z_]\w*)`, regexp.Multiline)
-	importRe    = regexp.MustCompile(`^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w./-]+)|#include\s*[<"]([^>"]+))`, regexp.Multiline)
-	callRe      = regexp.MustCompile(`\b([A-Za-z_]\w*)\s*\(`)
+	pyFuncRe      = regexp.MustCompile(`(?m)^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)`)
+	jsFuncRe      = regexp.MustCompile(`(?m)^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?\(([^)]*)\)\s*=>|^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)`)
+	goFuncRe      = regexp.MustCompile(`(?m)^\s*func\s+(?:\([^)]*\)\s+)?([A-Za-z_]\w*)\s*\(([^)]*)\)`)
+	rustFuncRe    = regexp.MustCompile(`(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)\s*(?:<[^>]+>)?\s*\(([^)]*)\)`)
+	javaFuncRe    = regexp.MustCompile(`(?m)^\s*(?:public|private|protected|static|final|synchronized|abstract|native|\s)+[\w<>\[\], ?]+\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:throws[^\{]+)?\{`)
+	typeRe        = regexp.MustCompile(`(?m)^\s*(?:class|struct|enum|interface)\s+([A-Za-z_]\w*)`)
+	importRe      = regexp.MustCompile(`(?m)^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w./-]+)|#include\s*[<"]([^>"]+))`)
+	callRe        = regexp.MustCompile(`\b([A-Za-z_]\w*)\s*\(`)
 )
 
 type IndexedFile struct {
@@ -46,7 +48,7 @@ type CodeIndexService struct {
 }
 
 func NewCodeIndexService(g graph.GraphRepository) *CodeIndexService {
-	return &CodeIndexService{graph: g, parserVersion: "regex-v1"}
+	return &CodeIndexService{graph: g, parserVersion: "treesitter-v7"}
 }
 
 func (s *CodeIndexService) ParserVersion() string { return s.parserVersion }
@@ -100,7 +102,7 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 			}
 		}
 		discovered[p] = true
-		indexed, err := s.IndexFile(project.ID, projectID, p, incremental)
+		indexed, err := s.indexFile(project.ID, projectID, p, incremental)
 		if err == nil {
 			results = append(results, indexed)
 		}
@@ -132,6 +134,8 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 		s.graph.RemoveNodes(deleted)
 	}
 
+	s.resolveGraph(projectID)
+
 	funcs := 0
 	changed := 0
 	for _, r := range results {
@@ -150,13 +154,32 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 	}, nil
 }
 
+// IndexFile indexes one file and resolves call edges for the project.
 func (s *CodeIndexService) IndexFile(projectNodeID, projectID, filePath string, incremental bool) (*IndexedFile, error) {
+	res, err := s.indexFile(projectNodeID, projectID, filePath, incremental)
+	if err == nil && res.Changed {
+		s.resolveGraph(projectID)
+	}
+	return res, err
+}
+
+func (s *CodeIndexService) indexFile(projectNodeID, projectID, filePath string, incremental bool) (*IndexedFile, error) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}
+	if len(content) > maxIndexFileBytes {
+		return &IndexedFile{Path: filePath}, nil
+	}
 	digest := fmt.Sprintf("%x", sha256.Sum256(content))
 	text := string(content)
+	generated := isGenerated(filePath, text)
+	root := ""
+	if pn, err := s.graph.GetNode(projectNodeID); err == nil {
+		root = strProp(pn, "path")
+	}
+	rel := ids.Rel(root, filePath)
+	commit := s.headCommit(root)
 
 	existing, _ := s.graph.FindNodes("SourceFile", map[string]any{"project_id": projectID, "path": filePath})
 	if incremental && len(existing) > 0 {
@@ -167,74 +190,108 @@ func (s *CodeIndexService) IndexFile(projectNodeID, projectID, filePath string, 
 		}
 	}
 
+	// Symbols are updated in place, not deleted and recreated, so their node IDs
+	// (and every edge attached to them: memory links, evidence, C->Rust mappings)
+	// survive re-indexing. Only symbols that no longer exist are removed.
+	previous := map[string]bool{}
+	keep := map[string]bool{}
 	if len(existing) > 0 {
 		neighbors, _ := s.graph.Neighbors(existing[0].ID, "DEFINES", graph.DirOut)
-		var ids []string
 		for _, en := range neighbors {
-			ids = append(ids, en.Node.ID)
+			previous[en.Node.ID] = true
 		}
-		s.graph.RemoveNodes(ids)
 	}
 
 	language := strings.TrimPrefix(filepath.Ext(filePath), ".")
 	source, err := s.graph.UpsertNode("SourceFile", map[string]any{
 		"project_id": projectID, "path": filePath,
 	}, map[string]any{
-		"hash":             digest,
-		"parser_version":   s.parserVersion,
-		"language":         language,
-		"last_indexed_at":  time.Now().UTC().Format(time.RFC3339),
+		"hash":            digest,
+		"parser_version":  s.parserVersion,
+		"language":        language,
+		"generated":       generated,
+		"rel_path":        rel,
+		"stable_id":       ids.FileID(rel),
+		"commit":          commit,
+		"last_indexed_at": time.Now().UTC().Format(time.RFC3339),
 	})
 	if err != nil {
 		return nil, err
 	}
 	s.graph.Link("CONTAINS", projectNodeID, source.ID, nil)
 
-	funcMatches := extractFunctions(text, filepath.Ext(filePath))
-	symbols := make(map[string]string)
-	for _, fm := range funcMatches {
+	funcInfos := mergeFuncInfos(extractFunctionInfos(text, filepath.Ext(filePath)))
+	for _, fi := range funcInfos {
 		fn, err := s.graph.UpsertNode("Function", map[string]any{
-			"project_id":       projectID,
-			"qualified_name":   fmt.Sprintf("%s:%s", filePath, fm.name),
+			"project_id":     projectID,
+			"qualified_name": fmt.Sprintf("%s:%s", rel, fi.qualifiedName()),
 		}, map[string]any{
-			"name":             fm.name,
-			"path":             filePath,
-			"line_start":       fm.start,
-			"parameter_count":  countParams(fm.params),
-			"language":         language,
-			"source_hash":      digest,
+			"stable_id":       ids.Symbol(ids.Func, rel, fi.qualifiedName()),
+			"rel_path":        rel,
+			"start_byte":      fi.span.startByte,
+			"end_byte":        fi.span.endByte,
+			"start_col":       fi.span.startCol,
+			"end_col":         fi.span.endCol,
+			"content_hash":    spanHash(content, fi.span),
+			"commit":          commit,
+			"name":            fi.name,
+			"owner":           fi.owner,
+			"path":            filePath,
+			"line_start":      fi.start,
+			"line_end":        fi.end,
+			"parameter_count": fi.params,
+			"language":        language,
+			"source_hash":     digest,
+			"generated":       generated,
+			"calls":           toAny(uniqueStrings(fi.calls, fi.name)),
+			"refs":            toAny(uniqueStrings(fi.refs, fi.name)),
 		})
 		if err == nil {
+			keep[fn.ID] = true
 			s.graph.Link("DEFINES", source.ID, fn.ID, nil)
-			symbols[fm.name] = fn.ID
 		}
 	}
 
-	for _, match := range typeRe.FindAllStringSubmatch(text, -1) {
-		_, err := s.graph.UpsertNode("Type", map[string]any{
-			"project_id": projectID,
-			"qualified_name": fmt.Sprintf("%s:%s", filePath, match[1]),
+	for _, tm := range extractTypes(text, filepath.Ext(filePath)) {
+		node, err := s.graph.UpsertNode(tm.kind, map[string]any{
+			"project_id":     projectID,
+			"qualified_name": fmt.Sprintf("%s:%s", rel, tm.name),
 		}, map[string]any{
-			"name":      match[1],
-			"path":      filePath,
-			"line_start": strings.Count(text[:match[0][0]], "\n") + 1,
+			"stable_id":    ids.Symbol(strings.ToLower(tm.kind), rel, tm.name),
+			"rel_path":     rel,
+			"start_byte":   tm.span.startByte,
+			"end_byte":     tm.span.endByte,
+			"start_col":    tm.span.startCol,
+			"end_col":      tm.span.endCol,
+			"content_hash": spanHash(content, tm.span),
+			"commit":       commit,
+			"name":         tm.name,
+			"path":         filePath,
+			"line_start":   tm.start,
+			"line_end":     tm.end,
+			"refs":         toAny(tm.refs),
+			"type_kind":    tm.typeKind,
+			"language":     language,
+			"source_hash":  digest,
+			"generated":    generated,
 		})
 		if err == nil {
-			// link is handled below
+			keep[node.ID] = true
+			s.graph.Link("DEFINES", source.ID, node.ID, nil)
 		}
 	}
 
-	for _, match := range importRe.FindAllStringSubmatch(text, -1) {
-		var target string
-		for _, g := range match[1:] {
-			if g != "" {
-				target = g
-				break
-			}
+	var relStrs []any
+	if rels, ok := extractRelationsTreeSitter(text, filepath.Ext(filePath)); ok {
+		for _, r := range rels {
+			relStrs = append(relStrs, encodeRelation(r))
 		}
-		if target == "" {
-			continue
-		}
+	}
+	imports := uniqueStrings(extractImports(text, filepath.Ext(filePath)), "")
+	s.graph.UpsertNode("SourceFile", map[string]any{"project_id": projectID, "path": filePath},
+		map[string]any{"type_relations": relStrs, "imports": toAny(imports)})
+
+	for _, target := range imports {
 		dep, err := s.graph.UpsertNode("Module", map[string]any{
 			"project_id": projectID, "name": target,
 		}, map[string]any{"name": target})
@@ -243,42 +300,17 @@ func (s *CodeIndexService) IndexFile(projectNodeID, projectID, filePath string, 
 		}
 	}
 
-	allFunctions, _ := s.graph.FindNodes("Function", map[string]any{"project_id": projectID})
-	funcMap := make(map[string]string)
-	for _, n := range allFunctions {
-		if name, ok := n.Properties["name"].(string); ok {
-			funcMap[name] = n.Properties["id"].(string)
+	var vanished []string
+	for id := range previous {
+		if !keep[id] {
+			vanished = append(vanished, id)
 		}
 	}
-
-	lines := strings.Split(text, "\n")
-	for _, fm := range funcMatches {
-		callerID, ok := symbols[fm.name]
-		if !ok {
-			continue
-		}
-		start := fm.start - 1
-		end := start + 80
-		if end > len(lines) {
-			end = len(lines)
-		}
-		if start < 0 {
-			start = 0
-		}
-		block := strings.Join(lines[start:end], "\n")
-		for _, callMatch := range callRe.FindAllStringSubmatch(block, -1) {
-			called := callMatch[1]
-			if called != fm.name {
-				if calleeID, found := funcMap[called]; found {
-					s.graph.Link("CALLS", callerID, calleeID, map[string]any{
-						"source": "static-parser", "confidence": 0.65,
-					})
-				}
-			}
-		}
+	if len(vanished) > 0 {
+		s.graph.RemoveNodes(vanished)
 	}
 
-	return &IndexedFile{Path: filePath, Changed: true, Functions: len(funcMatches)}, nil
+	return &IndexedFile{Path: filePath, Changed: true, Functions: len(funcInfos)}, nil
 }
 
 type functionMatch struct {
@@ -347,4 +379,64 @@ func countParams(params string) int {
 		}
 	}
 	return count
+}
+
+func (s *CodeIndexService) resolveGraph(projectID string) {
+	s.ResolveCalls(projectID)
+	s.ResolveInheritance(projectID)
+	s.ResolveReferences(projectID)
+	s.ResolveImports(projectID)
+	s.ResolveDataFlow(projectID)
+}
+
+// ResolveAll re-runs every resolver for a project and reports graph-wide edge
+// totals by kind (the graph does not count edges per project).
+func (s *CodeIndexService) ResolveAll(projectID string) map[string]any {
+	s.resolveGraph(projectID)
+	out := map[string]any{"project_id": projectID}
+	if c, ok := s.graph.(interface {
+		Counts() (map[string]int, map[string]int)
+	}); ok {
+		_, edges := c.Counts()
+		for _, kind := range []string{"CALLS", "EXTENDS", "IMPLEMENTS", "USES", "DEPENDS_ON"} {
+			out[strings.ToLower(kind)] = edges[kind]
+		}
+	}
+	return out
+}
+
+// spanHash fingerprints the exact bytes of a definition so a later read can tell
+// whether the code under a reference has changed.
+func spanHash(content []byte, sp span) string {
+	if sp.startByte < 0 || sp.endByte > len(content) || sp.startByte > sp.endByte {
+		return ""
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(content[sp.startByte:sp.endByte]))
+}
+
+var (
+	commitMu    sync.Mutex
+	commitCache = map[string]struct {
+		sha string
+		at  time.Time
+	}{}
+)
+
+// headCommit returns the checkout's HEAD commit (best effort, cached briefly so
+// indexing thousands of files does not fork git per file).
+func (s *CodeIndexService) headCommit(root string) string {
+	if root == "" {
+		return ""
+	}
+	commitMu.Lock()
+	defer commitMu.Unlock()
+	if c, ok := commitCache[root]; ok && time.Since(c.at) < 2*time.Second {
+		return c.sha
+	}
+	sha, _ := git(root, "rev-parse", "HEAD")
+	commitCache[root] = struct {
+		sha string
+		at  time.Time
+	}{sha, time.Now()}
+	return sha
 }

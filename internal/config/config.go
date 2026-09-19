@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"codergag/internal/cache"
 	"gopkg.in/yaml.v3"
 )
 
@@ -27,11 +28,27 @@ type IndexingConfig struct {
 	Ignore      []string `yaml:"ignore"`
 }
 
+type VerificationConfig struct {
+	// Enabled globally enables the runner. Off by default for safety.
+	Enabled bool `yaml:"enabled"`
+	// AllowedCommands is the set of executable names that may be invoked.
+	AllowedCommands []string `yaml:"allowed_commands"`
+	// AllowedSubcommands restricts which sub-verbs a binary may use.
+	// Key is the binary name; value is the list of allowed first arguments.
+	AllowedSubcommands map[string][]string `yaml:"allowed_subcommands"`
+	// TimeoutSeconds caps a single run. Default 120.
+	TimeoutSeconds int `yaml:"timeout_seconds"`
+	// MaxOutputBytes caps captured stdout+stderr. Default 64 KB.
+	MaxOutputBytes int `yaml:"max_output_bytes"`
+}
+
 type Config struct {
-	Database DatabaseConfig  `yaml:"database"`
-	Projects []ProjectConfig `yaml:"projects"`
-	Indexing IndexingConfig  `yaml:"indexing"`
-	Storage  string          `yaml:"storage,omitempty"`
+	Database     DatabaseConfig    `yaml:"database"`
+	Projects     []ProjectConfig   `yaml:"projects"`
+	Indexing     IndexingConfig    `yaml:"indexing"`
+	Storage      string            `yaml:"storage,omitempty"`
+	Cache        cache.CacheConfig `yaml:"cache,omitempty"`
+	Verification VerificationConfig `yaml:"verification,omitempty"`
 }
 
 func Default() Config {
@@ -49,6 +66,7 @@ func Default() Config {
 			Ignore:      []string{".git", "build", "node_modules"},
 		},
 		Storage: "sqlite",
+		Cache:   cache.DefaultConfig(),
 	}
 }
 
@@ -81,6 +99,15 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.Storage == "" {
 		cfg.Storage = "sqlite"
+	}
+	if cfg.Cache.Semantic.Threshold == 0 {
+		cfg.Cache.Semantic.Threshold = 0.92
+	}
+	if cfg.Cache.Semantic.MaxResults == 0 {
+		cfg.Cache.Semantic.MaxResults = 5
+	}
+	if cfg.Cache.TTL.Seconds == 0 {
+		cfg.Cache.TTL.Seconds = 86400
 	}
 	return cfg, nil
 }

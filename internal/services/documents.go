@@ -9,14 +9,18 @@ import (
 	"strings"
 
 	"codergag/internal/graph"
+	"codergag/internal/models"
+	"codergag/internal/search"
 )
 
 type DocumentService struct {
-	graph graph.GraphRepository
+	graph  graph.GraphRepository
+	ranker search.Ranker
+	known  map[string]bool
 }
 
 func NewDocumentService(g graph.GraphRepository) *DocumentService {
-	return &DocumentService{graph: g}
+	return &DocumentService{graph: g, ranker: search.NewBM25()}
 }
 
 func (s *DocumentService) IndexMarkdown(projectID, path string) (map[string]any, error) {
@@ -60,11 +64,11 @@ func (s *DocumentService) IndexMarkdown(projectID, path string) (map[string]any,
 	}
 	s.graph.Link("CONTAINS", parentID, document.ID, nil)
 
-	headingRe := regexp.MustCompile(`^(#{1,6})\s+(.+?)\s*$`)
+	headingRe := regexp.MustCompile(`(?m)^(#{1,6})\s+(.+?)\s*$`)
 	headings := headingRe.FindAllStringSubmatchIndex(content, -1)
 	var sections []map[string]any
 	for i, match := range headings {
-		heading := content[match[2]:match[3]]
+		heading := content[match[4]:match[5]]
 		lineStart := strings.Count(content[:match[0]], "\n") + 1
 		end := len(content)
 		if i+1 < len(headings) {
@@ -74,11 +78,11 @@ func (s *DocumentService) IndexMarkdown(projectID, path string) (map[string]any,
 		if len(sectionContent) > 12000 {
 			sectionContent = sectionContent[:12000]
 		}
-		level := len(content[match[0]:match[1]])
+		level := match[3] - match[2]
 		sec, err := s.graph.UpsertNode("DocumentSection", map[string]any{
-			"project_id":   projectID,
-			"document_id":  document.ID,
-			"heading":      strings.TrimSpace(heading),
+			"project_id":  projectID,
+			"document_id": document.ID,
+			"heading":     strings.TrimSpace(heading),
 		}, map[string]any{
 			"level":      level,
 			"content":    sectionContent,
@@ -97,59 +101,16 @@ func (s *DocumentService) IndexMarkdown(projectID, path string) (map[string]any,
 }
 
 func (s *DocumentService) Search(projectID, query string, limit int) ([]map[string]any, error) {
-	terms := []string{}
-	for _, t := range regexp.MustCompile(`\w+`).FindAllString(strings.ToLower(query), -1) {
-		if t != "" {
-			terms = append(terms, t)
-		}
-	}
 	nodes, err := s.graph.FindNodes("DocumentSection", map[string]any{"project_id": projectID})
 	if err != nil {
 		return nil, err
 	}
-	type scored struct {
-		score int
-		node  *modelsNode
-	}
-	var results []scored
-	for _, n := range nodes {
-		head, _ := n.Properties["heading"].(string)
-		body, _ := n.Properties["content"].(string)
-		haystack := strings.ToLower(head + " " + body)
-		score := 0
-		for _, term := range terms {
-			score += strings.Count(haystack, term)
+	return rankNodes(s.ranker, nodes, query, limit, func(n *models.Node) []search.Field {
+		return []search.Field{
+			{Text: strProp(n, "heading"), Weight: 3},
+			{Text: strProp(n, "content"), Weight: 1},
 		}
-		if score > 0 {
-			results = append(results, scored{score, n})
-		}
-	}
-	for i := 0; i < len(results); i++ {
-		for j := i + 1; j < len(results); j++ {
-			if results[j].score > results[i].score {
-				results[i], results[j] = results[j], results[i]
-			}
-		}
-	}
-	if limit > len(results) {
-		limit = len(results)
-	}
-	var out []map[string]any
-	for i := 0; i < limit; i++ {
-		n := results[i].node
-		row := map[string]any{"score": results[i].score, "id": n.ID, "kind": n.Kind}
-		for k, v := range n.Properties {
-			row[k] = v
-		}
-		out = append(out, row)
-	}
-	return out, nil
-}
-
-type modelsNode = struct {
-	ID         string
-	Kind       string
-	Properties map[string]any
+	}), nil
 }
 
 func (s *DocumentService) ListSources(projectID string) ([]map[string]any, error) {
@@ -182,48 +143,49 @@ func (s *DocumentService) RemoveSource(projectID, documentID string) (map[string
 	return map[string]any{"removed": true, "sections": len(sections)}, nil
 }
 
+// VerifyDesign checks a design document against the graph: identifiers it
+// mentions that exist are "verified", and code-like references that do not exist
+// are returned as "unverified" (with a rename suggestion when one is close).
 func (s *DocumentService) VerifyDesign(projectID, documentID string) (map[string]any, error) {
-	sections, _ := s.graph.Neighbors(documentID, "CONTAINS", graph.DirOut)
-	fns, err := s.graph.FindNodes("Function", map[string]any{"project_id": projectID})
-	if err != nil {
-		return nil, err
+	doc, err := s.graph.GetNode(documentID)
+	if err != nil || doc.Properties["project_id"] != projectID {
+		return nil, &ServiceError{Message: "document is absent or belongs to another project"}
 	}
-	symbols := make(map[string]bool)
-	for _, n := range fns {
-		if name, ok := n.Properties["name"].(string); ok {
-			symbols[name] = true
+	sections, _ := s.graphSections(doc)
+	ix := s.symbolIndex(projectID)
+	var claims, unverified []map[string]any
+	seen := map[string]bool{}
+	for _, sec := range sections {
+		heading := strProp(sec, "heading")
+		strong, weak, _ := docCodeRefs(heading + "\n" + strProp(sec, "content"))
+		isStrong := map[string]bool{}
+		for _, st := range strong {
+			isStrong[st] = true
 		}
-		if qname, ok := n.Properties["qualified_name"].(string); ok {
-			symbols[qname] = true
-		}
-	}
-	type claim struct {
-		Identifier string `json:"identifier"`
-		Section    string `json:"section"`
-		Verified   bool   `json:"verified"`
-	}
-	var claims []map[string]any
-	idRe := regexp.MustCompile(`\b[A-Za-z_]\w{2,}\b`)
-	for _, en := range sections {
-		content, _ := en.Node.Properties["content"].(string)
-		heading, _ := en.Node.Properties["heading"].(string)
-		identifiers := make(map[string]bool)
-		for _, match := range idRe.FindAllString(content, -1) {
-			identifiers[match] = true
-		}
-		for id := range identifiers {
-			if symbols[id] {
-				claims = append(claims, map[string]any{
-					"identifier": id,
-					"section":    heading,
-					"verified":   true,
-				})
+		for _, id := range append(append([]string{}, strong...), weak...) {
+			if seen[id] {
+				continue
 			}
+			seen[id] = true
+			if _, ok := ix.names[id]; ok {
+				claims = append(claims, map[string]any{"identifier": id, "section": heading, "verified": true})
+				continue
+			}
+			if !isStrong[id] {
+				continue
+			}
+			row := map[string]any{"identifier": id, "section": heading}
+			if sug := ix.suggest(id); sug != "" {
+				row["did_you_mean"] = sug
+			}
+			unverified = append(unverified, row)
 		}
 	}
 	return map[string]any{
-		"document_id": documentID,
-		"verified":    len(claims),
-		"claims":      claims,
+		"document_id":           documentID,
+		"verified":              len(claims),
+		"unverified":            len(unverified),
+		"claims":                claims,
+		"unverified_references": unverified,
 	}, nil
 }
