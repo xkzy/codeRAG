@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # codeRAG installer - works with any coding agent
-# Usage: curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/xkzy/codeRAG/main/install.sh | bash
 # Or: ./install.sh [--agent <agent>] [--dir <dir>] [--config <path>]
 
 set -euo pipefail
 
 VERSION="1.0.0"
-REPO="kilocode/codeRAG"
+REPO="xkzy/codeRAG"
 INSTALL_DIR="${HOME}/.codergag"
 CONFIG_DIR="${HOME}/.config/codergag"
 BIN_DIR="${HOME}/.local/bin"
