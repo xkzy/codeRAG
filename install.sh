@@ -110,6 +110,38 @@ check_prereqs() {
     log "Git $(git --version | cut -d' ' -f3) ✓"
 }
 
+# Download a prebuilt release binary; returns non-zero to fall back to a source build.
+download_prebuilt() {
+    local os arch asset url tmp
+    case "$(uname -s)" in Linux) os=linux ;; Darwin) os=darwin ;; *) return 1 ;; esac
+    case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) return 1 ;; esac
+    asset="codergag_${os}_${arch}.tar.gz"
+    url="https://github.com/${REPO}/releases/latest/download/${asset}"
+    tmp="$(mktemp -d)"
+    log "Trying prebuilt binary (${asset})..."
+    if ! curl -fsSL "$url" -o "${tmp}/${asset}" 2>/dev/null; then
+        warn "No prebuilt binary available, building from source"
+        rm -rf "$tmp"
+        return 1
+    fi
+    if curl -fsSL "https://github.com/${REPO}/releases/latest/download/SHA256SUMS" -o "${tmp}/SHA256SUMS" 2>/dev/null; then
+        local want got
+        want="$(grep " ${asset}\$" "${tmp}/SHA256SUMS" | cut -d' ' -f1)"
+        got="$( (sha256sum "${tmp}/${asset}" 2>/dev/null || shasum -a 256 "${tmp}/${asset}") | cut -d' ' -f1)"
+        if [[ -n "$want" && "$want" != "$got" ]]; then
+            err "Checksum mismatch for ${asset}"
+            rm -rf "$tmp"
+            exit 1
+        fi
+    fi
+    mkdir -p "$BIN_DIR"
+    tar xzf "${tmp}/${asset}" -C "$tmp" codergag
+    install -m 0755 "${tmp}/codergag" "${BIN_DIR}/codergag"
+    rm -rf "$tmp"
+    log "Binary installed to ${BIN_DIR}/codergag (prebuilt)"
+    return 0
+}
+
 # Build from source
 build_from_source() {
     if [[ "$SKIP_BUILD" == "true" ]]; then
@@ -117,6 +149,10 @@ build_from_source() {
         return
     fi
     
+    if download_prebuilt; then
+        return
+    fi
+
     log "Building codeRAG from source..."
     
     local build_dir="${INSTALL_DIR}/src"
