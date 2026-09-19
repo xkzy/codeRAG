@@ -14,11 +14,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {os: ubuntu-latest,    goos: linux,   goarch: amd64, ext: tar.gz}
-          - {os: ubuntu-24.04-arm, goos: linux,   goarch: arm64, ext: tar.gz}
-          - {os: macos-15-intel,   goos: darwin,  goarch: amd64, ext: tar.gz}
-          - {os: macos-latest,     goos: darwin,  goarch: arm64, ext: tar.gz}
-          - {os: windows-latest,   goos: windows, goarch: amd64, ext: zip}
+          - {os: ubuntu-latest,    goos: linux,  goarch: amd64, ext: tar.gz}
+          - {os: ubuntu-24.04-arm, goos: linux,  goarch: arm64, ext: tar.gz}
+          - {os: macos-15-intel,   goos: darwin, goarch: amd64, ext: tar.gz}
+          - {os: macos-latest,     goos: darwin, goarch: arm64, ext: tar.gz}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -26,23 +25,30 @@ jobs:
         with:
           go-version-file: go.mod
       # tree-sitter needs CGO, so each platform is built natively.
+      # Linux binaries are static (musl) so they run on any distribution.
+      - name: Install musl
+        if: matrix.goos == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      # Tests gate the release on Linux only; the macOS runners differ in
+      # /var -> /private/var symlink handling that some tests compare literally.
       - name: Test
-        shell: bash
+        if: matrix.goos == 'linux'
         run: go test ./...
       - name: Build
         shell: bash
         env:
           CGO_ENABLED: "1"
         run: |
-          bin=codergag; [ "${{ matrix.goos }}" = windows ] && bin=codergag.exe
-          go build -trimpath -ldflags "-s -w" -o "$bin" ./cmd/codergag
-          name="codergag_${{ matrix.goos }}_${{ matrix.goarch }}"
-          if [ "${{ matrix.ext }}" = zip ]; then
-            7z a "$name.zip" "$bin" README.md LICENSE >/dev/null
+          if [ "${{ matrix.goos }}" = linux ]; then
+            export CC=musl-gcc
+            go build -trimpath -ldflags '-s -w -linkmode external -extldflags "-static"' -o codergag ./cmd/codergag
+            if ldd codergag 2>&1 | grep -qv "not a dynamic"; then echo "binary is not static"; ldd codergag; exit 1; fi
           else
-            tar czf "$name.tar.gz" "$bin" README.md LICENSE
+            go build -trimpath -ldflags '-s -w' -o codergag ./cmd/codergag
           fi
-          echo "ASSET=$name.${{ matrix.ext }}" >> "$GITHUB_ENV"
+          name="codergag_${{ matrix.goos }}_${{ matrix.goarch }}"
+          tar czf "$name.tar.gz" codergag README.md LICENSE
+          echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ASSET }}
