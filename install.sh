@@ -15,6 +15,7 @@ CUSTOM_CONFIG=""
 SKIP_BUILD=false
 SKIP_CONFIG=false
 FORCE=false
+DRY_RUN=false
 
 usage() {
     cat <<EOF
@@ -23,13 +24,15 @@ codeRAG installer v${VERSION}
 Usage: $0 [options]
 
 Options:
-  --agent AGENT       Coding agent to configure (claude-code, copilot, cursor, kilo, opencode, continue, aider, none)
+  --agent AGENT       Agent(s) to configure: claude-code, codex, opencode, kilo, cursor, vscode, continue,
+                      a comma list, "all" (every agent found on this machine) or none
   --dir DIR           Installation directory (default: ~/.codergag)
   --bin-dir DIR       Binary directory (default: ~/.local/bin)
   --config PATH       Use custom config file
   --skip-build        Skip building from source (use prebuilt)
   --skip-config       Skip agent configuration
   --force             Overwrite existing installation
+  --dry-run           Show which agent configs would change; write nothing
   --help              Show this help
 
 Examples:
@@ -52,37 +55,30 @@ while [[ $# -gt 0 ]]; do
         --skip-build) SKIP_BUILD=true; shift ;;
         --skip-config) SKIP_CONFIG=true; shift ;;
         --force) FORCE=true; shift ;;
+        --dry-run) DRY_RUN=true; shift ;;
         --help) usage; exit 0 ;;
         *) err "Unknown option: $1"; usage; exit 1 ;;
     esac
 done
 
+# Agents present on this machine, one per line.
+installed_agents() {
+    command -v claude &>/dev/null || [[ -f "$HOME/.claude.json" ]] && echo claude-code
+    command -v codex &>/dev/null || [[ -d "$HOME/.codex" ]] && echo codex
+    command -v opencode &>/dev/null || [[ -d "$HOME/.config/opencode" ]] && echo opencode
+    command -v kilo &>/dev/null || [[ -d "$HOME/.config/kilo" ]] && echo kilo
+    command -v cursor &>/dev/null || [[ -d "$HOME/.cursor" ]] && echo cursor
+    [[ -d "$HOME/.config/Code/User" || -d "$HOME/Library/Application Support/Code/User" ]] && echo vscode
+    [[ -d "$HOME/.continue" ]] && echo continue
+    return 0
+}
+
 # Detect agent if not specified
 detect_agent() {
     if [[ -n "$AGENT" ]]; then return; fi
-    
-    if command -v claude &>/dev/null; then
-        AGENT="claude-code"
-    elif command -v cursor &>/dev/null; then
-        AGENT="cursor"
-    elif command -v kilo &>/dev/null; then
-        AGENT="kilo"
-    elif command -v opencode &>/dev/null; then
-        AGENT="opencode"
-    elif command -v continue &>/dev/null; then
-        AGENT="continue"
-    elif command -v aider &>/dev/null; then
-        AGENT="aider"
-    elif [[ -d "$HOME/.config/claude" ]]; then
-        AGENT="claude-code"
-    elif [[ -d "$HOME/.cursor" ]]; then
-        AGENT="cursor"
-    elif [[ -d "$HOME/.config/kilo" ]]; then
-        AGENT="kilo"
-    else
-        AGENT="none"
-    fi
-    log "Detected agent: $AGENT"
+    AGENT="$(installed_agents | head -n1)"
+    [[ -z "$AGENT" ]] && AGENT="none"
+    log "Detected agent: $AGENT (use --agent all to configure every agent found)"
 }
 
 # Check prerequisites
@@ -261,184 +257,117 @@ YAML
 }
 
 # Configure agent
+# --- agent configuration -------------------------------------------------
+# Every change merges into the agent's existing config (never overwrites other
+# servers) and backs the file up first. Agents with a native "mcp add" CLI use it.
+
+BIN_PATH() { echo "${BIN_DIR}/codergag"; }
+
+backup_file() {
+    [[ -f "$1" ]] || return 0
+    local b; b="$1.codergag-bak-$(date +%Y%m%d%H%M%S)"
+    cp -p "$1" "$b" && log "  backup: $b"
+}
+
+# json_merge FILE JQ_FILTER [jq args...] - merge codergag into a JSON config.
+json_merge() {
+    local file="$1" filter="$2"; shift 2
+    if ! command -v jq &>/dev/null; then warn "jq is required to edit $file - skipped"; return 1; fi
+    local base='{}'
+    if [[ -f "$file" ]]; then
+        if ! jq -e . "$file" &>/dev/null; then
+            warn "$file is not plain JSON (comments?) - add the codergag server manually"
+            return 1
+        fi
+        base="$(cat "$file")"
+    fi
+    local out
+    out="$(printf '%s' "$base" | jq --arg bin "$(BIN_PATH)" --arg cfg "${CONFIG_DIR}/config.yaml" "$@" "$filter")" || return 1
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log "  [dry-run] would update $file (servers after: $(printf '%s' "$out" | jq -c '[(.mcp // .mcpServers // .servers) | keys[]]'))"
+        return 0
+    fi
+    if [[ -f "$file" && "$(printf '%s' "$out" | jq -S .)" == "$(jq -S . "$file")" ]]; then
+        log "  already configured: $file"
+        return 0
+    fi
+    backup_file "$file"
+    mkdir -p "$(dirname "$file")"
+    printf '%s\n' "$out" > "$file"   # write in place so permissions are kept
+    log "  configured: $file"
+}
+
+# run_cli DESCRIPTION CMD... - execute, or print under --dry-run.
+run_cli() {
+    local what="$1"; shift
+    if [[ "$DRY_RUN" == "true" ]]; then log "  [dry-run] would run: $*"; return 0; fi
+    "$@" &>/dev/null && log "  configured: $what" || { warn "  failed: $*"; return 1; }
+}
+
+MCP_LOCAL='{codergag:{type:"local",command:[$bin,"serve"],environment:{CODERAG_CONFIG:$cfg},enabled:true}}'
+MCP_STDIO='{codergag:{command:$bin,args:["serve"],env:{CODERAG_CONFIG:$cfg}}}'
+
+configure_claude_code() {
+    if command -v claude &>/dev/null; then
+        # The CLI owns ~/.claude.json (it is rewritten constantly while Claude Code runs).
+        claude mcp remove --scope user codergag &>/dev/null || true
+        run_cli "Claude Code (user scope)" claude mcp add codergag --scope user --env "CODERAG_CONFIG=${CONFIG_DIR}/config.yaml" -- "$(BIN_PATH)" serve
+    else
+        json_merge "$HOME/.claude.json" ".mcpServers = ((.mcpServers // {}) + $MCP_STDIO)"
+    fi
+}
+configure_codex() {
+    if command -v codex &>/dev/null; then
+        codex mcp remove codergag &>/dev/null || true
+        run_cli "Codex" codex mcp add codergag --env "CODERAG_CONFIG=${CONFIG_DIR}/config.yaml" -- "$(BIN_PATH)" serve
+    else
+        warn "codex CLI not found - skipped"
+    fi
+}
+configure_opencode() { json_merge "$HOME/.config/opencode/opencode.json" ".mcp = ((.mcp // {}) + $MCP_LOCAL)"; }
+configure_kilo() {
+    local f="$HOME/.config/kilo/kilo.jsonc"; [[ -f "$f" ]] || f="$HOME/.config/kilo/kilo.json"
+    json_merge "$f" ".mcp = ((.mcp // {}) + $MCP_LOCAL)"
+}
+configure_cursor() { json_merge "$HOME/.cursor/mcp.json" ".mcpServers = ((.mcpServers // {}) + $MCP_STDIO)"; }
+configure_vscode() {
+    local d="$HOME/.config/Code/User"; [[ -d "$d" ]] || d="$HOME/Library/Application Support/Code/User"
+    json_merge "$d/mcp.json" ".servers = ((.servers // {}) + {codergag:{type:\"stdio\",command:\$bin,args:[\"serve\"],env:{CODERAG_CONFIG:\$cfg}}})"
+}
+configure_continue() {
+    local f="$HOME/.continue/config.json"
+    json_merge "$f" '.mcpServers = ((.mcpServers // []) | map(select(.name != "codergag")) + [{name:"codergag",command:$bin,args:["serve"],env:{CODERAG_CONFIG:$cfg}}])'
+}
+
 configure_agent() {
     [[ "$SKIP_CONFIG" == "true" ]] && return
     [[ "$AGENT" == "none" ]] && { log "No agent to configure"; return; }
-    
-    log "Configuring for agent: $AGENT"
-    
-    local config_path="${CONFIG_DIR}/config.yaml"
-    local mcp_config=""
-    
-    case "$AGENT" in
-        claude-code)
-            configure_claude_code "$config_path"
-            ;;
-        copilot)
-            configure_copilot "$config_path"
-            ;;
-        cursor)
-            configure_cursor "$config_path"
-            ;;
-        kilo)
-            configure_kilo "$config_path"
-            ;;
-        opencode)
-            configure_opencode "$config_path"
-            ;;
-        continue)
-            configure_continue "$config_path"
-            ;;
-        aider)
-            configure_aider "$config_path"
-            ;;
-        *)
-            warn "Unknown agent: $AGENT, skipping configuration"
-            ;;
-    esac
-}
 
-configure_claude_code() {
-    local config_path="$1"
-    local mcp_file="${HOME}/.config/claude/mcp_servers.json"
-    
-    mkdir -p "$(dirname "$mcp_file")"
-    
-    if [[ -f "$mcp_file" ]]; then
-        # Update existing
-        if command -v jq &>/dev/null; then
-            jq --arg cmd "codergag serve" --arg config "$config_path" \
-               '. + {"codergag": {"command": $cmd, "args": [], "env": {"CODERAG_CONFIG": $config}}}' \
-               "$mcp_file" > "${mcp_file}.tmp" && mv "${mcp_file}.tmp" "$mcp_file"
-        else
-            warn "jq not found, please add manually to $mcp_file"
-            return
-        fi
-    else
-        cat > "$mcp_file" <<EOF
-{
-  "codergag": {
-    "command": "codergag",
-    "args": ["serve"],
-    "env": {
-      "CODERAG_CONFIG": "$config_path"
-    }
-  }
-}
-EOF
+    local list="$AGENT"
+    if [[ "$AGENT" == "all" ]]; then
+        list="$(installed_agents | paste -sd, -)"
+        [[ -z "$list" ]] && { log "No supported agents found"; return; }
+        log "Agents found: ${list//,/ }"
     fi
-    
-    log "Claude Code MCP configured: $mcp_file"
-}
 
-configure_copilot() {
-    warn "GitHub Copilot doesn't support MCP servers directly."
-    warn "Use the VS Code extension or continue with another agent."
-}
-
-configure_cursor() {
-    local config_path="$1"
-    local mcp_file="${HOME}/.cursor/mcp.json"
-    
-    mkdir -p "$(dirname "$mcp_file")"
-    
-    cat > "$mcp_file" <<EOF
-{
-  "mcpServers": {
-    "codergag": {
-      "command": "codergag",
-      "args": ["serve"],
-      "env": {
-        "CODERAG_CONFIG": "$config_path"
-      }
-    }
-  }
-}
-EOF
-    
-    log "Cursor MCP configured: $mcp_file"
-}
-
-configure_kilo() {
-    local config_path="$1"
-    local kilo_dir="${HOME}/.config/kilo"
-    local mcp_file="${kilo_dir}/mcp.json"
-    
-    mkdir -p "$kilo_dir"
-    
-    cat > "$mcp_file" <<EOF
-{
-  "mcpServers": {
-    "codergag": {
-      "command": "codergag",
-      "args": ["serve"],
-      "env": {
-        "CODERAG_CONFIG": "$config_path"
-      }
-    }
-  }
-}
-EOF
-    
-    log "Kilo MCP configured: $mcp_file"
-}
-
-configure_opencode() {
-    local config_path="$1"
-    local opencode_dir="${HOME}/.config/opencode"
-    local mcp_file="${opencode_dir}/mcp.json"
-    
-    mkdir -p "$opencode_dir"
-    
-    cat > "$mcp_file" <<EOF
-{
-  "mcpServers": {
-    "codergag": {
-      "command": "codergag",
-      "args": ["serve"],
-      "env": {
-        "CODERAG_CONFIG": "$config_path"
-      }
-    }
-  }
-}
-EOF
-    
-    log "OpenCode MCP configured: $mcp_file"
-}
-
-configure_continue() {
-    local config_path="$1"
-    local continue_dir="${HOME}/.continue"
-    local config_file="${continue_dir}/config.json"
-    
-    mkdir -p "$continue_dir"
-    
-    if [[ -f "$config_file" ]]; then
-        warn "Continue config exists at $config_file"
-        warn "Please add codergag MCP server manually to your config.json"
-    else
-        cat > "$config_file" <<EOF
-{
-  "mcpServers": [
-    {
-      "name": "codergag",
-      "command": "codergag",
-      "args": ["serve"],
-      "env": {
-        "CODERAG_CONFIG": "$config_path"
-      }
-    }
-  ]
-}
-EOF
-        log "Continue config created: $config_file"
-    fi
-}
-
-configure_aider() {
-    warn "Aider doesn't support MCP servers directly."
-    warn "Run 'codergag serve' in a separate terminal and use aider with --mcp flag if available."
+    local a
+    IFS=',' read -ra AGENTS <<< "$list"
+    for a in "${AGENTS[@]}"; do
+        log "Configuring: $a"
+        case "$a" in
+            claude-code) configure_claude_code ;;
+            codex)       configure_codex ;;
+            opencode)    configure_opencode ;;
+            kilo)        configure_kilo ;;
+            cursor)      configure_cursor ;;
+            vscode|copilot) configure_vscode ;;
+            continue)    configure_continue ;;
+            gemini)      warn "  gemini: no stable MCP config location - add '$(BIN_PATH) serve' manually" ;;
+            aider)       warn "  aider has no MCP support - run '$(BIN_PATH) serve' separately" ;;
+            *)           warn "  unknown agent: $a (skipped)" ;;
+        esac
+    done
+    CONFIGURED_AGENTS="$list"
 }
 
 # Add binary to PATH
@@ -495,10 +424,15 @@ main() {
     log "Binary directory: $BIN_DIR"
     
     detect_agent
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log "DRY RUN: reporting agent changes only; nothing is written"
+        configure_agent
+        return 0
+    fi
     check_prereqs
-    
+
     mkdir -p "$BIN_DIR" "$INSTALL_DIR" "$CONFIG_DIR"
-    
+
     build_from_source
     create_config
     configure_agent
@@ -518,23 +452,9 @@ main() {
     echo "Data:   ${INSTALL_DIR}/codergag.db"
     echo ""
     
-    case "$AGENT" in
-        claude-code)
-            echo "Claude Code: Restart Claude Code to load the MCP server"
-            ;;
-        cursor)
-            echo "Cursor: Restart Cursor to load the MCP server"
-            ;;
-        kilo)
-            echo "Kilo: Restart Kilo to load the MCP server"
-            ;;
-        opencode)
-            echo "OpenCode: Restart OpenCode to load the MCP server"
-            ;;
-        continue)
-            echo "Continue: Restart Continue to load the MCP server"
-            ;;
-    esac
+    if [[ -n "${CONFIGURED_AGENTS:-}" && "$DRY_RUN" != "true" ]]; then
+        echo "Restart these agents to load the codergag MCP server: ${CONFIGURED_AGENTS//,/ }"
+    fi
 }
 
 main "$@"
