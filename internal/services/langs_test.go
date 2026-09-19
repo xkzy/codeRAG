@@ -296,3 +296,44 @@ func TestLanguageOf(t *testing.T) {
 		}
 	}
 }
+
+const plan9Sample = `#include "textflag.h"
+
+// func blockAVX2(dig *Digest, p []byte)
+TEXT ·blockAVX2(SB), NOSPLIT, $536-32
+	MOVQ dig+0(FP), DI
+avx2_loop0:
+	CALL runtime·memmove(SB)
+	CALL ·helper(SB)
+	JNE  avx2_loop0
+	JMP  ·blockSHANI(SB)
+	RET
+
+TEXT ·blockSHANI(SB), $0-32
+roundLoop:
+	RET
+`
+
+func TestAsmPlan9(t *testing.T) {
+	fs := extractFunctionInfos(plan9Sample, ".s")
+	if got := funcNames(plan9Sample, ".s"); !reflect.DeepEqual(got, []string{"blockAVX2", "blockSHANI"}) {
+		t.Fatalf("got %v (labels must not become functions)", got)
+	}
+	if !contains(fs[0].calls, "memmove") || !contains(fs[0].calls, "helper") || !contains(fs[0].calls, "blockSHANI") {
+		t.Errorf("calls: %v", fs[0].calls)
+	}
+	if fs[0].end >= fs[1].start {
+		t.Errorf("ranges overlap: %d-%d / %d", fs[0].start, fs[0].end, fs[1].start)
+	}
+}
+
+func TestAsmFirstLabelFallbackOnlyWithoutGlobals(t *testing.T) {
+	// No globals: first label is the entry point.
+	if got := funcNames("entry:\n  ret\n", ".s"); !reflect.DeepEqual(got, []string{"entry"}) {
+		t.Errorf("got %v", got)
+	}
+	// With a declared function, a preceding jump label is not a function.
+	if got := funcNames("stray:\n  nop\n.globl real\nreal:\n  ret\n", ".s"); !reflect.DeepEqual(got, []string{"real"}) {
+		t.Errorf("got %v", got)
+	}
+}

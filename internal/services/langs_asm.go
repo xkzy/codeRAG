@@ -22,7 +22,10 @@ var (
 	asmCallRe     = regexp.MustCompile(`(?i)^\s*(?:[A-Za-z_.$][\w.$@]*\s*:\s*)?(?:rep\w*\s+)?(call[lq]?|bl|blx|jal|tail)\s+(?:(?:ra|x1|\$ra)\s*,\s*)?(?:(?:near|far|dword|qword|ptr)\s+)*\*?\s*([A-Za-z_][\w.$@]*)`)
 	asmJumpRe     = regexp.MustCompile(`(?i)^\s*(?:[A-Za-z_.$][\w.$@]*\s*:\s*)?(?:jmp|b|j|bra)\s+(?:(?:near|far|short)\s+)*([A-Za-z_][\w.$@]*)\s*$`)
 	asmLocalLabel = regexp.MustCompile(`^(?:L(?:BB|tmp|CPI|JTI|str|C|\.)\w*|L\d+|\.L\w*|\d+)$`)
-	asmCommentRe  = regexp.MustCompile(`(?:;|//|\s@).*$`)
+	// Go/Plan 9 assembler: TEXT ·name(SB), flags, $frame-args ; CALL ·f(SB) ; JMP f(SB)
+	asmPlan9Text = regexp.MustCompile(`^\s*TEXT\s+([^\s(,]+)\(SB\)`)
+	asmPlan9Call = regexp.MustCompile(`^\s*(?:[A-Za-z_]\w*:\s*)?(CALL|JMP|BL|B)\s+([^\s(,$]+)\(SB\)`)
+	asmCommentRe = regexp.MustCompile(`(?:;|//|\s@).*$`)
 )
 
 func asmClean(line string) string {
@@ -51,11 +54,61 @@ func asmTarget(name string) string {
 	return name
 }
 
+// plan9Name strips the package qualifier: ·blockAVX2 -> blockAVX2, runtime·memmove -> memmove.
+func plan9Name(sym string) string {
+	if i := strings.LastIndex(sym, "·"); i >= 0 {
+		sym = sym[i+len("·"):]
+	}
+	return sym
+}
+
+// extractPlan9Functions handles Go assembler files, where functions are TEXT
+// symbols and every label is a local jump target.
+func extractPlan9Functions(content string, cleaned []string) []funcInfo {
+	var out []funcInfo
+	var cur *funcInfo
+	closeCur := func(endLine int) {
+		if cur == nil {
+			return
+		}
+		if endLine < cur.start {
+			endLine = cur.start
+		}
+		cur.end = endLine
+		cur.span = lineSpan(content, cur.start, endLine)
+		out = append(out, *cur)
+		cur = nil
+	}
+	for i, l := range cleaned {
+		if m := asmPlan9Text.FindStringSubmatch(l); m != nil {
+			closeCur(i)
+			cur = &funcInfo{name: plan9Name(m[1]), start: i + 1}
+			continue
+		}
+		if cur == nil {
+			continue
+		}
+		if m := asmPlan9Call.FindStringSubmatch(l); m != nil {
+			t := plan9Name(m[2])
+			if t != cur.name && (m[1] == "CALL" || m[1] == "BL" || !strings.HasPrefix(m[2], ".")) {
+				cur.calls = append(cur.calls, t)
+			}
+		}
+	}
+	closeCur(len(cleaned))
+	return out
+}
+
 func extractAsmFunctions(content string) []funcInfo {
 	lines := strings.Split(content, "\n")
 	cleaned := make([]string, len(lines))
 	for i, l := range lines {
 		cleaned[i] = asmClean(l)
+	}
+	for _, l := range cleaned {
+		if asmPlan9Text.MatchString(l) {
+			return extractPlan9Functions(content, cleaned)
+		}
 	}
 
 	// Pass 1: which labels are functions.
@@ -126,7 +179,8 @@ func extractAsmFunctions(content string) []funcInfo {
 			case asmDataDirRe.MatchString(rest):
 			case funcSet[name]:
 				isFunc = true
-			case cur == nil:
+			case cur == nil && len(funcSet) == 0:
+				// A file that declares nothing global still has its first label as an entry point.
 				isFunc = true
 			}
 			if isFunc {
