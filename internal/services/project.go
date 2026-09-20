@@ -92,7 +92,7 @@ func (d *ProjectDetector) register(root string, found *[]*ProjectIdentity) {
 	if err != nil {
 		return
 	}
-	id := stableProjectID(clean)
+	id := StableProjectID(clean)
 	d.mu.Lock()
 	existing := d.projects[id]
 	if existing != nil {
@@ -144,7 +144,7 @@ func (d *ProjectDetector) Get(root string) *ProjectIdentity {
 	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	if project := d.projects[stableProjectID(clean)]; project != nil {
+	if project := d.projects[StableProjectID(clean)]; project != nil {
 		return cloneProject(project)
 	}
 	var best *ProjectIdentity
@@ -218,7 +218,8 @@ func isProjectRoot(dir string) bool {
 	return false
 }
 
-func stableProjectID(root string) string {
+// StableProjectID returns the deterministic project id for a root path.
+func StableProjectID(root string) string {
 	clean, err := canonicalProjectRoot(root)
 	if err == nil {
 		root = clean

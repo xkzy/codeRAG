@@ -22,6 +22,7 @@ type DaemonConfig struct {
 	IndexIncremental      bool
 	IndexIgnore           []string
 	MaxDirtyFiles         int
+	SkipGraphify          bool
 }
 
 type Daemon struct {
@@ -273,7 +274,7 @@ func (d *Daemon) AddProject(root string) {
 		return
 	}
 	d.registerProject(&ProjectIdentity{
-		ID:   stableProjectID(filepath.Clean(abs)),
+		ID:   StableProjectID(filepath.Clean(abs)),
 		Root: filepath.Clean(abs),
 		Name: filepath.Base(abs),
 	})
@@ -448,7 +449,7 @@ func (p *ProjectWorker) runMaintenance() {
 		var err error
 		if p.app != nil && p.app.Index != nil {
 			if fullIndex || len(dirtyFiles) == 0 {
-				_, err = p.app.Index.IndexRepository(p.projectID, p.root, p.cfg.IndexIncremental, p.cfg.IndexIgnore)
+				_, err = p.app.Index.IndexRepository(p.projectID, p.root, p.cfg.IndexIncremental, p.cfg.IndexIgnore, p.cfg.SkipGraphify)
 			} else {
 				_, err = p.app.Index.IndexFiles(p.projectID, p.root, dirtyFiles, true, p.cfg.IndexIgnore)
 				if err != nil {

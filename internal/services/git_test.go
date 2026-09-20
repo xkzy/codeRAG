@@ -76,7 +76,7 @@ func TestPrContextIsBranchAwareAndLineAccurate(t *testing.T) {
 	gitRun(t, dir, "checkout", "feature")
 
 	app := ApplicationInMemory()
-	if _, err := app.Index.IndexRepository("p", dir, true, nil); err != nil {
+	if _, err := app.Index.IndexRepository("p", dir, true, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := app.Documents.IndexMarkdown("p", dir+"/NOTES.md"); err != nil {
@@ -143,7 +143,7 @@ func TestPrContextErrorsAreExplicit(t *testing.T) {
 	gitRun(t, dir, "add", ".")
 	gitRun(t, dir, "commit", "-m", "base")
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	if _, err := app.Git.PrContext("p", "no-such-ref", 10); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("unknown base must be reported: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestReviewSuggestions(t *testing.T) {
 	gitRun(t, dir, "add", ".")
 	gitRun(t, dir, "commit", "-m", "base")
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	// Unknown project returns nil.
 	if got := app.Git.ReviewSuggestions("missing", nil, 5); got != nil {
 		t.Fatalf("expected nil for unknown project, got %v", got)

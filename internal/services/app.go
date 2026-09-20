@@ -32,6 +32,14 @@ type Application struct {
 	Daemon    *Daemon
 }
 
+// IndexProgress returns the most recent index-progress snapshot for a project.
+func (a *Application) IndexProgress(projectID string) *IndexProgress {
+	if a.Index == nil {
+		return nil
+	}
+	return a.Index.Progress(projectID)
+}
+
 func NewApplication(g graph.GraphRepository) *Application {
 	repoKind := "Project"
 	_ = repoKind
@@ -80,7 +88,7 @@ func ApplicationFromConfig(cfg *config.Config) (*Application, error) {
 				dbPath = filepath.Join(home, strings.TrimPrefix(dbPath, "~"))
 			}
 		}
-		repo, err := graph.NewPersistentRepository(dbPath)
+		repo, err := graph.NewPersistentRepositoryWithCache(dbPath, cfg.Graph.CacheNodes, cfg.Graph.CacheEdges)
 		if err != nil {
 			return nil, err
 		}
@@ -133,6 +141,7 @@ func daemonConfigFromConfig(cfg config.Config) DaemonConfig {
 		Roots:                 roots,
 		IndexIncremental:      cfg.Indexing.Incremental,
 		IndexIgnore:           cfg.Indexing.Ignore,
+		SkipGraphify:          cfg.Indexing.SkipGraphify,
 	}
 }
 

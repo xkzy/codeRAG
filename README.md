@@ -43,6 +43,8 @@ The server uses stdio MCP. The CLI command is `codergag`. Main tools include `fi
 
 Cache tools include `cache_lookup`, `cache_store`, `cache_invalidate`, `cache_stats`, `cache_explain`, `get_cached_analysis`, `refresh_analysis`, `ensure_fresh`, and `prepare_context`.
 
+Search tools include `search_code_graph` (BM25 keyword) and `search_semantic` (BM25 + vector fusion via reciprocal rank fusion). Indexing exposes `index_repository`, `index_file`, `index_files`, and `index_progress` so a long-running index pass can be reported across agent turns.
+
 Responses are bounded and include provenance, evidence, and confidence where available. `query_graph` is an expert-only guarded read-only query and requires a project predicate. The server exposes no arbitrary shell, debugger, network, privilege, or destructive-file tool.
 
 ## Data and safety model

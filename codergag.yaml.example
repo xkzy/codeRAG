@@ -27,9 +27,15 @@ indexing:
     - "*.min.js"
     - "*.pb.go"
     - "vendor"
+  skip_graphify: false  # skip knowledge graph building during indexing to save memory
 
 # Storage backend: "sqlite" or "memory" (default: sqlite)
 storage: "sqlite"
+
+# Graph repository cache sizes (default: 1024 each)
+graph:
+  cache_nodes: 1024
+  cache_edges: 1024
 
 # Multi-level cache configuration
 cache:

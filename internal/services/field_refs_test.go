@@ -65,7 +65,7 @@ func TestStructFieldsBecomeUsesEdgesAndFollowEdits(t *testing.T) {
 		"a.go": "package x\ntype Index struct{}\ntype Repo struct{}\ntype Base struct{}\ntype App struct {\n\tBase\n\tIdx *Index\n}\nfunc (a *App) Run() { var r Repo; _ = r }\n",
 	})
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	if got := typeUses(app, "Struct", "App"); strings.Join(got, ",") != "Index" {
 		t.Fatalf("App uses %v, want [Index]: embedded Base is EXTENDS and method-body Repo belongs to Run", got)
 	}
@@ -79,7 +79,7 @@ func TestStructFieldsBecomeUsesEdgesAndFollowEdits(t *testing.T) {
 	writeTree(t, dir, map[string]string{
 		"a.go": "package x\ntype Index struct{}\ntype Repo struct{}\ntype Base struct{}\ntype App struct {\n\tBase\n\tR Repo\n}\n",
 	})
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	if got := typeUses(app, "Struct", "App"); strings.Join(got, ",") != "Repo" {
 		t.Fatalf("field edge should move from Index to Repo: %v", got)
 	}
@@ -92,7 +92,7 @@ func TestFieldTypeRefsStayInsideTheirLanguage(t *testing.T) {
 		"b.py": "class Holder:\n    t: Thing\n",
 	})
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	if got := typeUses(app, "Class", "Holder"); len(got) != 0 {
 		t.Fatalf("a Python annotation must not link to a Go struct: %v", got)
 	}

@@ -80,7 +80,7 @@ func TestInheritanceEdgesAcrossFiles(t *testing.T) {
 	write("b.py", "class Base:\n    pass\n")
 	write("s.rs", "struct Circle {}\ntrait Shape {}\nimpl Shape for Circle {}\n")
 	app := ApplicationInMemory()
-	if _, err := app.Index.IndexRepository("p", dir, true, nil); err != nil {
+	if _, err := app.Index.IndexRepository("p", dir, true, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := edgeTargets(app, "p", "EXTENDS", "Child"); len(got) != 1 || got[0] != "Base" {
@@ -92,7 +92,7 @@ func TestInheritanceEdgesAcrossFiles(t *testing.T) {
 
 	// Re-indexing must not duplicate edges.
 	write("b.py", "class Base:\n    x = 1\n")
-	if _, err := app.Index.IndexRepository("p", dir, true, nil); err != nil {
+	if _, err := app.Index.IndexRepository("p", dir, true, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := edgeTargets(app, "p", "EXTENDS", "Child"); len(got) != 1 {

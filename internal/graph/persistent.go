@@ -281,6 +281,7 @@ type PersistentGraphRepository struct {
 	deletedEdges map[string]bool
 	needsSave    bool
 	stamp        fileStamp
+	cachedState  *repoState
 }
 
 type fileStamp struct {
@@ -333,12 +334,13 @@ func (r *PersistentGraphRepository) load() error {
 		return err
 	}
 	defer unlock()
-	_, migrated, err := readState(r.dbPath)
+	st, migrated, err := readState(r.dbPath)
 	if err != nil {
 		return err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.cachedState = st
 	r.cache.clear()
 	r.stamp = stampOf(r.dbPath)
 	r.needsSave = migrated
@@ -586,12 +588,36 @@ func (r *PersistentGraphRepository) readEffectiveStateLocked() (*repoState, erro
 	if r.dbPath == "" {
 		return &repoState{SchemaVersion: SchemaVersion, Nodes: map[string]gobNode{}, Edges: map[string]gobEdge{}}, nil
 	}
+	currentStamp := stampOf(r.dbPath)
+	if r.cachedState != nil && currentStamp == r.stamp {
+		// Clone cached state to avoid concurrent modification
+		st := cloneRepoState(r.cachedState)
+		r.mergeJournalSnapshotLocked(st)
+		return st, nil
+	}
 	st, _, err := readState(r.dbPath)
 	if err != nil {
 		return nil, err
 	}
+	r.cachedState = st
+	r.stamp = currentStamp
 	r.mergeJournalSnapshotLocked(st)
 	return st, nil
+}
+
+func cloneRepoState(src *repoState) *repoState {
+	dst := &repoState{
+		SchemaVersion: src.SchemaVersion,
+		Nodes:         make(map[string]gobNode, len(src.Nodes)),
+		Edges:         make(map[string]gobEdge, len(src.Edges)),
+	}
+	for k, v := range src.Nodes {
+		dst.Nodes[k] = v
+	}
+	for k, v := range src.Edges {
+		dst.Edges[k] = v
+	}
+	return dst
 }
 
 func (r *PersistentGraphRepository) mergeJournalSnapshotLocked(st *repoState) {
@@ -980,7 +1006,9 @@ func parseAndExecuteQuery(query string, params map[string]any, st *repoState) ([
 
 func splitWhere(s string) []string {
 	var parts []string
-	for _, part := range strings.Split(s, "&&") {
+	// Handle both SQL AND and && 
+	re := regexp.MustCompile(`\s+AND\s+|\s*&&\s*`)
+	for _, part := range re.Split(s, -1) {
 		part = strings.TrimSpace(part)
 		if part != "" {
 			parts = append(parts, part)
@@ -990,8 +1018,30 @@ func splitWhere(s string) []string {
 }
 
 func parseCondition(clause string, params map[string]any) (func(*models.Node) bool, error) {
+	clause = strings.TrimSpace(clause)
+
+	// LIKE pattern: prop LIKE 'pattern'
+	likeRe := regexp.MustCompile(`^\s*(\w+)\s+LIKE\s+('.+?')\s*$`)
+	m := likeRe.FindStringSubmatch(clause)
+	if m != nil {
+		propName := m[1]
+		pattern := m[2][1 : len(m[2])-1] // remove quotes
+		// Convert SQL LIKE to Go regexp
+		regexPattern := strings.ReplaceAll(pattern, "%", ".*")
+		regexPattern = strings.ReplaceAll(regexPattern, "_", ".")
+		re, err := regexp.Compile("^" + regexPattern + "$")
+		if err != nil {
+			return nil, fmt.Errorf("invalid LIKE pattern: %w", err)
+		}
+		return func(node *models.Node) bool {
+			val := toString(node.Properties[propName])
+			return re.MatchString(val)
+		}, nil
+	}
+
+	// Equality pattern: prop = value
 	eqRe := regexp.MustCompile(`^\s*(\w+)\s*=\s*(:\w+|'.+?')\s*$`)
-	m := eqRe.FindStringSubmatch(clause)
+	m = eqRe.FindStringSubmatch(clause)
 	if m == nil {
 		return nil, fmt.Errorf("unsupported condition: %s", clause)
 	}
@@ -1051,6 +1101,7 @@ func (r *PersistentGraphRepository) Refresh() error {
 	if err != nil {
 		return err
 	}
+	r.cachedState = st
 	r.cache.clear()
 	r.mergeJournalSnapshotLocked(st)
 	r.stamp = stampOf(r.dbPath)
@@ -1092,6 +1143,7 @@ func (r *PersistentGraphRepository) Save() error {
 	if err := os.Rename(tmp, r.dbPath); err != nil {
 		return err
 	}
+	r.cachedState = st
 	r.cache.clear()
 	r.stamp = stampOf(r.dbPath)
 	r.clearJournalLocked()

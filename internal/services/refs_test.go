@@ -50,7 +50,7 @@ func TestSymbolIdentitySurvivesReindexAndKeepsAttachedEdges(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.go": cat21})
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	before := fnByStable(t, app, "func:a.go:parse_cat21")
 	gone := fnByStable(t, app, "func:a.go:decode_item")
 
@@ -61,7 +61,7 @@ func TestSymbolIdentitySurvivesReindexAndKeepsAttachedEdges(t *testing.T) {
 
 	// Edit the function body and delete decode_item; re-index.
 	writeTree(t, dir, map[string]string{"a.go": "package x\n\nfunc parse_cat21() int { return 42 }\n\ntype TargetState struct{ V int }\n"})
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 
 	if after := fnByStable(t, app, "func:a.go:parse_cat21"); after != before {
 		t.Fatalf("node ID changed across re-index: %s -> %s", before, after)
@@ -87,7 +87,7 @@ func TestVerifyDetectsStaleReferencesAndChangedContent(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.go": cat21})
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	const id = "func:a.go:parse_cat21"
 	res := app.Refs.Resolve("p", id)
 	hash := res.CurrentHash
@@ -117,7 +117,7 @@ func TestVerifyDetectsStaleReferencesAndChangedContent(t *testing.T) {
 		t.Fatalf("changed file must be stale: %+v", f)
 	}
 	// Re-indexing brings everything back to VALID.
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	if v := app.Refs.Verify("p", VerifyRequest{ID: id}); v.Status != RefValid {
 		t.Fatalf("after re-index: %+v", v)
 	}
@@ -135,7 +135,7 @@ func TestVerifyRevisionMovedButFileUnchangedIsValid(t *testing.T) {
 	gitRun(t, dir, "commit", "-am", "two")
 
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	v := app.Refs.Verify("p", VerifyRequest{ID: "func:a.go:parse_cat21", ExpectedRevision: first})
 	if v.Status != RefValid || !strings.Contains(v.Reason, "revision moved") {
 		t.Fatalf("a.go did not change between revisions: %+v", v)
@@ -285,7 +285,7 @@ func TestEditsAboveASymbolShiftItWithoutMakingItStale(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.go": cat21})
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	orig := app.Refs.Resolve("p", "func:a.go:decode_item")
 
 	// Insert lines above decode_item and change parse_cat21; decode_item itself is untouched.

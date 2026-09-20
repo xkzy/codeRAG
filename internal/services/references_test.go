@@ -28,7 +28,7 @@ func indexTree(t *testing.T, files map[string]string) (*Application, string) {
 	dir := t.TempDir()
 	writeTree(t, dir, files)
 	app := ApplicationInMemory()
-	if _, err := app.Index.IndexRepository("p", dir, true, nil); err != nil {
+	if _, err := app.Index.IndexRepository("p", dir, true, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	real, _ := filepath.EvalSymlinks(dir)
@@ -90,12 +90,12 @@ func TestReferenceEdgesAreMaintained(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.go": "package x\ntype T struct{}\nfunc F() *T { return nil }\n"})
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	if got := usesOf(t, app, "F"); len(got) != 1 {
 		t.Fatalf("setup: %v", got)
 	}
 	writeTree(t, dir, map[string]string{"a.go": "package x\ntype T struct{}\nfunc F() int { return 1 }\n"})
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	if got := usesOf(t, app, "F"); len(got) != 0 {
 		t.Fatalf("stale USES edge survived: %v", got)
 	}
@@ -187,13 +187,13 @@ func TestImportEdgesFollowEditsAndFeedDependencyTools(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.ts": "import b from './b';\n", "b.ts": "export const b = 1;\n", "c.ts": "export const c = 1;\n"})
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	real, _ := filepath.EvalSymlinks(dir)
 	if got := dependsOn(t, app, real, "a.ts"); len(got) != 1 || got[0] != "b.ts" {
 		t.Fatalf("setup: %v", got)
 	}
 	writeTree(t, dir, map[string]string{"a.ts": "import c from './c';\n"})
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	if got := dependsOn(t, app, real, "a.ts"); len(got) != 1 || got[0] != "c.ts" {
 		t.Fatalf("edge should move from b.ts to c.ts: %v", got)
 	}

@@ -22,7 +22,7 @@ func TestIndexRepositoryFileCap(t *testing.T) {
 	}
 	app := ApplicationInMemory()
 	defer app.Events.Stop()
-	res, err := app.Index.IndexRepository("p1", root, false, nil)
+	res, err := app.Index.IndexRepository("p1", root, false, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

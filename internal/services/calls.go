@@ -34,8 +34,8 @@ func (s *CodeIndexService) ResolveCalls(projectID string) error {
 	byQualified := map[string][]string{} // "Owner.method" -> []id
 	pathOf := map[string]string{}
 	for _, f := range fns {
-		name, _ := f.Properties["name"].(string)
-		owner, _ := f.Properties["owner"].(string)
+		name := strProp(f, "name")
+		owner := strProp(f, "owner")
 		if name == "" {
 			continue
 		}
@@ -280,7 +280,7 @@ func (s *CodeIndexService) ResolveInheritance(projectID string) error {
 			return err
 		}
 		for _, n := range nodes {
-			if name, _ := n.Properties["name"].(string); name != "" {
+			if name := strProp(n, "name"); name != "" {
 				byName[name] = append(byName[name], n.ID)
 			}
 			pathOf[n.ID], _ = n.Properties["path"].(string)
@@ -289,7 +289,7 @@ func (s *CodeIndexService) ResolveInheritance(projectID string) error {
 	}
 	desired := map[string]map[string]map[string]float64{} // sub -> rel -> super -> confidence
 	for _, f := range files {
-		path, _ := f.Properties["path"].(string)
+		path := strProp(f, "path")
 		for _, enc := range strSlice(f.Properties["type_relations"]) {
 			r, ok := decodeRelation(enc)
 			if !ok {

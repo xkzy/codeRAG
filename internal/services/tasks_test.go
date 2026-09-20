@@ -13,7 +13,7 @@ func taskApp(t *testing.T) (*Application, string) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.go": cat21})
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	return app, dir
 }
 
@@ -232,7 +232,7 @@ func TestAgentHandoffSurvivesPersistentReload(t *testing.T) {
 
 	// Agent A (e.g. Claude) reverse engineers, then its process exits.
 	appA, repoA := open()
-	appA.Index.IndexRepository("p", dir, true, nil)
+	appA.Index.IndexRepository("p", dir, true, nil, false)
 	ts, err := appA.Tasks.Create("p", "port parse_cat21 and prove equivalence", "reverse_engineer", "claude", nil, []string{"func:a.go:parse_cat21"})
 	if err != nil {
 		t.Fatal(err)

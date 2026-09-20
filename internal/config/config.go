@@ -29,8 +29,14 @@ type ProjectConfig struct {
 }
 
 type IndexingConfig struct {
-	Incremental bool     `yaml:"incremental" xml:"incremental"`
-	Ignore      []string `yaml:"ignore" xml:"ignore"`
+	Incremental  bool     `yaml:"incremental" xml:"incremental"`
+	Ignore       []string `yaml:"ignore" xml:"ignore"`
+	SkipGraphify bool     `yaml:"skip_graphify" xml:"skip_graphify"`
+}
+
+type GraphConfig struct {
+	CacheNodes int `yaml:"cache_nodes" xml:"cache_nodes"`
+	CacheEdges int `yaml:"cache_edges" xml:"cache_edges"`
 }
 
 type VerificationConfig struct {
@@ -94,6 +100,7 @@ type Config struct {
 	Storage      string             `yaml:"storage,omitempty" xml:"storage,omitempty"`
 	Cache        cache.CacheConfig  `yaml:"cache,omitempty" xml:"cache,omitempty"`
 	Verification VerificationConfig `yaml:"verification,omitempty" xml:"verification,omitempty"`
+	Graph        GraphConfig        `yaml:"graph,omitempty" xml:"graph,omitempty"`
 }
 
 func Default() Config {
@@ -107,8 +114,9 @@ func Default() Config {
 		},
 		Projects: []ProjectConfig{},
 		Indexing: IndexingConfig{
-			Incremental: true,
-			Ignore:      []string{".git", "build", "node_modules"},
+			Incremental:  true,
+			Ignore:       []string{".git", "build", "node_modules"},
+			SkipGraphify: false,
 		},
 		Watch: WatchConfig{
 			Enabled:          true,
@@ -124,6 +132,10 @@ func Default() Config {
 		},
 		Storage: "sqlite",
 		Cache:   cache.DefaultConfig(),
+		Graph: GraphConfig{
+			CacheNodes: 1024,
+			CacheEdges: 1024,
+		},
 	}
 }
 
@@ -215,6 +227,12 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.Cache.TTL.Seconds == 0 {
 		cfg.Cache.TTL.Seconds = 86400
+	}
+	if cfg.Graph.CacheNodes <= 0 {
+		cfg.Graph.CacheNodes = 1024
+	}
+	if cfg.Graph.CacheEdges <= 0 {
+		cfg.Graph.CacheEdges = 1024
 	}
 	return cfg, nil
 }

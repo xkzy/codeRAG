@@ -234,7 +234,9 @@ func (s *TeamService) GetTeamContext(projectID, teamID string, scopes []string, 
 	agentMap := make(map[string]bool)
 	roleMap := make(map[string]bool)
 	for _, a := range agents {
-		agentMap[a.Properties["agent"].(string)] = true
+		if name, ok := a.Properties["agent"].(string); ok && name != "" {
+			agentMap[name] = true
+		}
 		if role, ok := a.Properties["role"].(string); ok {
 			roleMap[role] = true
 		}
@@ -252,7 +254,7 @@ func (s *TeamService) GetTeamContext(projectID, teamID string, scopes []string, 
 		matchesScope := false
 		if kScopes, ok := k.Properties["scope"].([]any); ok {
 			for _, sc := range kScopes {
-				if scopeSet[sc.(string)] {
+				if s, ok := sc.(string); ok && scopeSet[s] {
 					matchesScope = true
 					break
 				}

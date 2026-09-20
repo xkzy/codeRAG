@@ -51,7 +51,7 @@ func (s *MemoryService) entityIndex(projectID string) (map[string][]*models.Node
 			return nil, err
 		}
 		for _, n := range nodes {
-			if name, _ := n.Properties["name"].(string); len(name) >= minEntityNameLen {
+			if name := strProp(n, "name"); len(name) >= minEntityNameLen {
 				index[name] = append(index[name], n)
 			}
 		}
@@ -198,7 +198,7 @@ func (s *MemoryService) Compact(projectID string, minGroup int) (map[string]any,
 		var body []string
 		var memberIDs []string
 		if existing != nil {
-			text, _ := existing.Properties["content"].(string)
+			text := strProp(existing, "content")
 			body = append(body, text)
 			for _, l := range strings.Split(text, "\n") {
 				seen[normalizeLine(l)] = true
@@ -206,10 +206,10 @@ func (s *MemoryService) Compact(projectID string, minGroup int) (map[string]any,
 			memberIDs = strSlice(existing.Properties["member_ids"])
 		}
 		for _, m := range members {
-			title, _ := m.Properties["title"].(string)
-			content, _ := m.Properties["content"].(string)
-			agent, _ := m.Properties["agent_source"].(string)
-			created, _ := m.Properties["created_at"].(string)
+			title := strProp(m, "title")
+			content := strProp(m, "content")
+			agent := strProp(m, "agent_source")
+			created := strProp(m, "created_at")
 			charsBefore += len(title) + len(content)
 			var unique []string
 			for _, l := range strings.Split(content, "\n") {
@@ -258,7 +258,7 @@ func (s *MemoryService) Compact(projectID string, minGroup int) (map[string]any,
 			s.graph.Link("MENTIONS", summary.ID, key, map[string]any{"source": "compaction"})
 		}
 		for _, m := range members {
-			title, _ := m.Properties["title"].(string)
+			title := strProp(m, "title")
 			if _, err := s.graph.UpsertNode("Memory", map[string]any{"project_id": projectID, "title": title},
 				map[string]any{"archived": true, "compacted_into": summary.ID}); err != nil {
 				return nil, err

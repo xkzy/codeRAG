@@ -381,8 +381,10 @@ func (c *ContextCompiler) teamItems(tc map[string]any, req ContextRequest) []Con
 // --- level 3: ranking across blocks ---
 
 func (c *ContextCompiler) rankBlocks(blocks []ContextBlock, question string, limit int) []ContextBlock {
-	// Collect all items with their block index and score, then re-distribute
-	// the top-limit per section back (preserving section structure).
+	// Collect every item with its block index, score globally, then rebuild the
+	// blocks in their original section order keeping the top `limit` items
+	// overall. This preserves section structure while still dropping the
+	// least-relevant items across all sections.
 	type scored struct {
 		block int
 		item  ContextItem
@@ -399,19 +401,21 @@ func (c *ContextCompiler) rankBlocks(blocks []ContextBlock, question string, lim
 	sort.SliceStable(all, func(i, j int) bool {
 		return all[i].item.Score > all[j].item.Score
 	})
-	// Rebuild blocks preserving section order, keeping only ranked items
-	rebuildMap := map[int][]ContextItem{}
-	kept := 0
-	for _, s := range all {
-		if kept >= limit*len(blocks) {
+	// Keep the top `limit` items (or everything if fewer), remembering which
+	// block each kept item came from so sections are rebuilt in order.
+	if limit <= 0 {
+		limit = len(all)
+	}
+	kept := make(map[int][]ContextItem, len(blocks))
+	for i, s := range all {
+		if i >= limit {
 			break
 		}
-		rebuildMap[s.block] = append(rebuildMap[s.block], s.item)
-		kept++
+		kept[s.block] = append(kept[s.block], s.item)
 	}
 	var out []ContextBlock
 	for i, b := range blocks {
-		if items, ok := rebuildMap[i]; ok {
+		if items, ok := kept[i]; ok {
 			out = append(out, ContextBlock{Section: b.Section, Items: items})
 		}
 	}

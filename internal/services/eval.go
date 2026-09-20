@@ -55,13 +55,32 @@ func (a *Application) Eval(projectID string) (*EvalReport, error) {
 		return nil, fmt.Errorf("project %q has not been indexed", projectID)
 	}
 	rep := &EvalReport{ProjectID: projectID, RanAt: time.Now().UTC().Format(time.RFC3339)}
-	rep.Metrics = []Metric{
-		a.evalRetrieval(projectID),
-		a.evalCallResolution(projectID),
-		a.evalInheritance(projectID),
-		a.evalFreshness(projectID),
-		a.evalMemoryRetention(projectID),
+	rep.Grade = "poor"
+
+	// A metric must never crash the process or leave a partial "latest" run
+	// behind. Each metric is recovered individually so one bad project does not
+	// take down the whole eval.
+	runMetric := func(name string, fn func(string) Metric) {
+		defer func() {
+			if r := recover(); r != nil {
+				rep.Metrics = append(rep.Metrics, Metric{
+					Name:   name,
+					Score:  0,
+					Weight: 1,
+					NA:     false,
+					Detail: "metric panicked: " + fmt.Sprint(r),
+				})
+			}
+		}()
+		rep.Metrics = append(rep.Metrics, fn(projectID))
 	}
+
+	runMetric("retrieval", a.evalRetrieval)
+	runMetric("call_resolution", a.evalCallResolution)
+	runMetric("inheritance", a.evalInheritance)
+	runMetric("freshness", a.evalFreshness)
+	runMetric("memory_retention", a.evalMemoryRetention)
+
 	var sum, weight float64
 	for _, m := range rep.Metrics {
 		if m.NA {
@@ -79,9 +98,17 @@ func (a *Application) Eval(projectID string) (*EvalReport, error) {
 		rep.Overall = int(sum/weight*100 + 0.5)
 		rep.Grade = gradeOf(rep.Overall)
 	}
-	blob, _ := json.Marshal(rep)
-	a.Graph.UpsertNode("EvalRun", map[string]any{"project_id": projectID, "name": "latest"},
-		map[string]any{"report": string(blob), "overall": rep.Overall, "ran_at": rep.RanAt})
+
+	// Only persist a complete report. A failed marshal means the run is not
+	// representable, so leave the previous "latest" in place.
+	blob, err := json.Marshal(rep)
+	if err != nil {
+		return rep, nil
+	}
+	if _, err := a.Graph.UpsertNode("EvalRun", map[string]any{"project_id": projectID, "name": "latest"},
+		map[string]any{"report": string(blob), "overall": rep.Overall, "ran_at": rep.RanAt}); err != nil {
+		return rep, err
+	}
 	return rep, nil
 }
 
@@ -573,12 +600,12 @@ func (a *Application) benchmarkReferenceAccuracy(projectID string) ReferenceBenc
 	allNodes = append(allNodes, structs...)
 	allNodes = append(allNodes, files...)
 
-	b.Total = len(allNodes)
 	for _, n := range allNodes {
 		stableID := strProp(n, "stable_id")
 		if stableID == "" {
 			continue
 		}
+		b.Total++
 		res := a.Refs.Resolve(projectID, stableID)
 		switch res.Status {
 		case RefValid:
@@ -588,14 +615,17 @@ func (a *Application) benchmarkReferenceAccuracy(projectID string) ReferenceBenc
 		case RefInvalid:
 			b.Invalid++
 		}
-		// Also test verify_reference with correct hash
+		// Also test verify_reference with correct hash. A symbol that resolves
+		// valid but fails verify is stale, so it replaces the valid count
+		// rather than adding to the invalid count (no double counting).
 		if res.Status == RefValid && res.Source != nil && res.Source.ContentHash != "" {
 			v := a.Refs.Verify(projectID, VerifyRequest{
 				ID:                  stableID,
 				ExpectedContentHash: res.Source.ContentHash,
 			})
 			if v.Status != RefValid {
-				b.Invalid++ // verify should pass for correct hash
+				b.Valid--
+				b.Stale++
 			}
 		}
 	}

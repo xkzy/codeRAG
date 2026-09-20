@@ -13,6 +13,18 @@ import (
 	"codergag/internal/services"
 )
 
+// toInt coerces the JSON number type (int or float64) returned by tool calls.
+func toInt(v any) int {
+	switch x := v.(type) {
+	case int:
+		return x
+	case float64:
+		return int(x)
+	default:
+		return 0
+	}
+}
+
 func TestRegistryIndexAndQuery(t *testing.T) {
 	dir := t.TempDir()
 	src := "package x\n\nfunc Alpha() { Beta() }\n\nfunc Beta() {}\n"
@@ -934,7 +946,7 @@ func TestRunBenchmark(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := services.ApplicationInMemory()
-	if _, err := app.Index.IndexRepository("p", dir, true, nil); err != nil {
+	if _, err := app.Index.IndexRepository("p", dir, true, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	reg := NewToolRegistry(app)
@@ -1012,5 +1024,147 @@ func TestRunBenchmark(t *testing.T) {
 	_, err = reg.Call("run_benchmark", map[string]any{"project_id": "missing"})
 	if err == nil {
 		t.Error("unindexed project should error")
+	}
+}
+
+func TestSemanticSearch(t *testing.T) {
+	dir := t.TempDir()
+	// Two functions in differently-named files. The file path is part of every
+	// document's bag-of-words vector, so a query that mentions the file name
+	// ranks the function in that file highly under both BM25 and vector fusion.
+	src := "package x\n\nfunc Alpha() {}\n\nfunc Beta() {}\n"
+	if err := os.WriteFile(filepath.Join(dir, "alpha.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "beta.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := NewToolRegistry(services.ApplicationInMemory())
+	if _, err := reg.Call("index_repository", map[string]any{"project_id": "p", "path": dir}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Keyword search for "alpha" returns the Alpha function.
+	keyword, err := reg.Call("search_code_graph", map[string]any{"project_id": "p", "query": "alpha", "limit": 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keywordRows := keyword["results"].([]map[string]any)
+	if len(keywordRows) == 0 || keywordRows[0]["name"] != "Alpha" {
+		t.Fatalf("keyword search expected Alpha first, got %+v", keywordRows)
+	}
+
+	// Semantic search uses the hybrid ranker and returns the same Alpha result.
+	sem, err := reg.Call("search_semantic", map[string]any{"project_id": "p", "query": "alpha", "limit": 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	semRows := sem["results"].([]map[string]any)
+	if len(semRows) == 0 || semRows[0]["name"] != "Alpha" {
+		t.Errorf("semantic search expected Alpha first, got %+v", semRows)
+	}
+
+	// Semantic search is project-scoped: a different project sees nothing.
+	other, err := reg.Call("search_semantic", map[string]any{"project_id": "other", "query": "alpha", "limit": 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other["count"].(int) != 0 {
+		t.Errorf("expected no results in unindexed project, got %+v", other)
+	}
+
+	// Missing project_id is rejected.
+	if _, err := reg.Call("search_semantic", map[string]any{"query": "x"}); err == nil {
+		t.Error("expected project_id error")
+	}
+}
+
+func TestIndexProgress(t *testing.T) {
+	dir := t.TempDir()
+	var files []string
+	for i := 0; i < 20; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("f%d.go", i))
+		if err := os.WriteFile(name, []byte(fmt.Sprintf("package x\n\nfunc F%d() {}\n", i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, name)
+	}
+	reg := NewToolRegistry(services.ApplicationInMemory())
+
+	// Before any indexing, progress reports idle.
+	idle, err := reg.Call("index_progress", map[string]any{"project_id": "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idle["finished"].(bool) || idle["phase"] != "idle" {
+		t.Errorf("expected idle progress, got %+v", idle)
+	}
+
+	if _, err := reg.Call("index_repository", map[string]any{"project_id": "p", "path": dir, "skip_graphify": true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// After indexing, progress reports done with the right totals.
+	done, err := reg.Call("index_progress", map[string]any{"project_id": "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !done["finished"].(bool) {
+		t.Error("expected finished progress")
+	}
+	if done["phase"] != "done" {
+		t.Errorf("expected phase done, got %v", done["phase"])
+	}
+	if toInt(done["files_done"]) != 20 {
+		t.Errorf("expected 20 files done, got %v", done["files_done"])
+	}
+	if toInt(done["functions"]) != 20 {
+		t.Errorf("expected 20 functions, got %v", done["functions"])
+	}
+
+	// IndexFiles also reports progress. Unchanged files are skipped by the
+	// incremental pass, so files_seen is 0 here; the point is that the progress
+	// tracker is updated and reports finished.
+	if res, err := reg.Call("index_files", map[string]any{
+		"project_id": "p", "root": dir, "files": files[:5],
+	}); err != nil {
+		t.Fatal(err)
+	} else {
+		t.Logf("index_files result: %+v", res)
+	}
+	inc, err := reg.Call("index_progress", map[string]any{"project_id": "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("incremental progress: %+v", inc)
+	if inc["finished"].(bool) != true {
+		t.Error("expected finished after incremental index")
+	}
+
+	// A genuinely changed file is re-indexed and progress reflects it.
+	if err := os.WriteFile(files[0], []byte("package x\n\nfunc F0() { F1() }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := reg.Call("index_files", map[string]any{
+		"project_id": "p", "root": dir, "files": []any{files[0]},
+	}); err != nil {
+		t.Fatal(err)
+	} else {
+		t.Logf("index_files changed result: %+v", res)
+		if toInt(res["files_seen"]) != 1 {
+			t.Errorf("expected 1 file seen after change, got %v", res["files_seen"])
+		}
+	}
+	changed, err := reg.Call("index_progress", map[string]any{"project_id": "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toInt(changed["files_done"]) != 1 {
+		t.Errorf("expected 1 file done after change, got %v", changed["files_done"])
+	}
+
+	// Missing project_id is rejected.
+	if _, err := reg.Call("index_progress", map[string]any{}); err == nil {
+		t.Error("expected project_id error")
 	}
 }
