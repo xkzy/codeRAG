@@ -79,6 +79,7 @@ reading files or grepping when you need relationships between symbols.
 
 - ` + "`memory_store`" + ` / ` + "`memory_search`" + ` — persistent agent memory
 - ` + "`memory_compact`" + ` — fold memories into summaries
+- ` + "`codergag ctx add|search|show|export|status`" + ` — durable project records injected by the Claude Code hooks
 
 ## Privacy
 

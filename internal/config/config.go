@@ -92,6 +92,27 @@ func (w WatchConfig) DebounceDuration() time.Duration {
 	return d
 }
 
+// ContextConfig sets the token budgets for hook-injected context digests.
+// Zero values fall back to the defaults.
+type ContextConfig struct {
+	SessionBudget int `yaml:"session_budget,omitempty" xml:"session_budget,omitempty"`
+	PromptBudget  int `yaml:"prompt_budget,omitempty" xml:"prompt_budget,omitempty"`
+}
+
+func (c ContextConfig) Session() int {
+	if c.SessionBudget > 0 {
+		return c.SessionBudget
+	}
+	return 1500
+}
+
+func (c ContextConfig) Prompt() int {
+	if c.PromptBudget > 0 {
+		return c.PromptBudget
+	}
+	return 500
+}
+
 type Config struct {
 	Database     DatabaseConfig     `yaml:"database" xml:"database"`
 	Projects     []ProjectConfig    `yaml:"projects" xml:"projects"`
@@ -101,6 +122,7 @@ type Config struct {
 	Cache        cache.CacheConfig  `yaml:"cache,omitempty" xml:"cache,omitempty"`
 	Verification VerificationConfig `yaml:"verification,omitempty" xml:"verification,omitempty"`
 	Graph        GraphConfig        `yaml:"graph,omitempty" xml:"graph,omitempty"`
+	Context      ContextConfig      `yaml:"context,omitempty" xml:"context,omitempty"`
 }
 
 func Default() Config {

@@ -47,6 +47,21 @@ Search tools include `search_code_graph` (BM25 keyword) and `search_semantic` (B
 
 Responses are bounded and include provenance, evidence, and confidence where available. `query_graph` is an expert-only guarded read-only query and requires a project predicate. The server exposes no arbitrary shell, debugger, network, privilege, or destructive-file tool.
 
+## Context records and hooks
+
+`codergag ctx` manages durable project context (decisions, conventions, tasks, notes) stored as graph memories:
+
+```bash
+codergag ctx add -kind decision -title "Use SQLite" -pin "single binary, no server"
+codergag ctx search sqlite
+codergag ctx status        # record counts and the token cost of the session digest
+codergag ctx export        # Markdown, grouped by kind
+codergag ctx profile set style terse
+codergag ctx reset -yes
+```
+
+`codergag setup --hooks` registers Claude Code hooks (`SessionStart`, `UserPromptSubmit`) that inject a token-budgeted digest: pinned records, decisions, and the records relevant to each prompt. Budgets are `context.session_budget` (default 1500) and `context.prompt_budget` (default 500) tokens. `codergag uninstall` removes only the hooks it added.
+
 ## Data and safety model
 
 Git/filesystem remains the source of truth for source and binary files. The persistent graph (gob-backed) stores references, hashes, relationships, analysis metadata, memories, documents, hypotheses, evidence, and validation results. The cache layer stores reusable results with deterministic cache keys based on project_id, tool_name, normalized arguments, parser version, and schema version. Major objects are project-scoped. Reverse-engineering knowledge distinguishes `FACT`, `OBSERVATION`, `INFERENCE`, `HYPOTHESIS`, and `CONFIRMED`; competing hypotheses are preserved.

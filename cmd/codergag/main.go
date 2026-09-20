@@ -32,6 +32,8 @@ const usage = "codergag - shared code knowledge graph for LLM agents\n\n" +
 	"  codergag register-instructions [--agent claude|all]   write tool instructions and register the MCP server\n" +
 	"  codergag doctor [--json]          health checks: graph, cache, daemon, config, storage\n" +
 	"  codergag config [show|get|set]   manage configuration\n" +
+	"  codergag ctx <add|search|show|export|status|profile|reset>   manage project context records\n" +
+	"  codergag hook <SessionStart|UserPromptSubmit>   Claude Code hook entry point (reads JSON on stdin)\n" +
 	"  codergag uninstall [--keep-db]   remove codeRAG components\n" +
 	"  codergag mcp                     start as MCP server (internal; use serve)\n" +
 	"\n" +
@@ -59,6 +61,7 @@ func main() {
 		cfg = loaded
 	}
 	cfg = configForCommand(cmd, args, cfg)
+	activeCfg = cfg
 	applyMemoryLimit()
 	app, err := services.ApplicationFromConfig(&cfg)
 	if err != nil {
@@ -96,6 +99,10 @@ func main() {
 		os.Exit(runIndex(app, args))
 	case "config":
 		os.Exit(runConfig(args))
+	case "ctx":
+		os.Exit(runCtx(app, args))
+	case "hook":
+		os.Exit(runHook(app, args))
 	case "uninstall":
 		os.Exit(runUninstall(args))
 	case "mcp":
@@ -128,7 +135,7 @@ func configForCommand(cmd string, args []string, cfg config.Config) config.Confi
 		// keep the daemon
 	case "http", "status", "eval", "maintenance",
 		"session", "inject", "register-instructions", "doctor",
-		"setup", "daemon", "model", "config", "uninstall":
+		"setup", "daemon", "model", "config", "uninstall", "ctx", "hook":
 		cfg.Watch.Enabled = false
 	}
 	return cfg

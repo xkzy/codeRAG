@@ -26,6 +26,13 @@ func runUninstall(args []string) int {
 		home = "."
 	}
 
+	if changed, err := updateSettingsFile(defaultSettingsPath(), true); err != nil {
+		fmt.Fprintln(os.Stderr, "uninstall: hooks:", err)
+	} else if changed {
+		fmt.Fprintf(os.Stderr, "removed codergag hooks from %s\n", defaultSettingsPath())
+		removed++
+	}
+
 	candidates := []string{
 		home + "/.codergag.yaml",
 		home + "/.codergag/instructions.md",

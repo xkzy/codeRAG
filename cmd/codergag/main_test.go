@@ -9,7 +9,7 @@ import (
 func TestConfigForCommandDisablesDaemonForReadOnlyCommands(t *testing.T) {
 	for _, cmd := range []string{"http", "status", "eval", "maintenance",
 		"session", "inject", "register-instructions", "doctor",
-		"setup", "daemon", "model", "config", "uninstall"} {
+		"setup", "daemon", "model", "config", "uninstall", "ctx", "hook"} {
 		if configForCommand(cmd, nil, config.Default()).Watch.Enabled {
 			t.Errorf("%s must not start the indexing daemon", cmd)
 		}
