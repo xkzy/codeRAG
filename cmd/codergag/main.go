@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -12,21 +15,32 @@ import (
 	"codergag/internal/services"
 )
 
-const usage = `codergag - shared code knowledge graph for LLM agents
-
-Usage:
-  codergag [serve]                 run the MCP server on stdio (default)
-  codergag watch [--interval 1s]   live daemon status on stderr (indexes as files change)
-  codergag http [--addr :8080]     local agent/memory dashboard
-  codergag status [--json]         health, usage and token-savings report
-  codergag eval -project ID [--json]   score retrieval, resolution, freshness, memory
-  codergag maintenance             run the optimization pass once
-
-Environment:
-  CODERAG_CONFIG                   path to config yaml
-  CODERAG_HTTP_ADDR                also serve the dashboard from serve (e.g. 127.0.0.1:8080)
-  CODERAG_MAINTENANCE_INTERVAL     scheduled optimization period (default 15m, 0 disables)
-`
+const usage = "codergag - shared code knowledge graph for LLM agents\n\n" +
+	"Usage:\n" +
+	"  codergag [serve]                 run the MCP server on stdio (default)\n" +
+	"  codergag setup [--yes]           first-time setup: write config, register MCP\n" +
+	"  codergag daemon [start|stop|restart|status]   manage the indexing daemon\n" +
+	"  codergag model [list|set|pull|remove]         manage local models (compat shim)\n" +
+	"  codergag index [run|status|watch] [root]      manage the codebase semantic index\n" +
+	"  codergag watch [--interval 1s]   live daemon status on stderr (indexes as files change)\n" +
+	"  codergag http [--addr :8080]     local agent/memory dashboard\n" +
+	"  codergag status [--json]         health, usage and token-savings report\n" +
+	"  codergag eval -project ID [--json]   score retrieval, resolution, freshness, memory\n" +
+	"  codergag maintenance             run the optimization pass once\n" +
+	"  codergag session [list|stats|flush|export] [--json]   inspect recorded tool usage\n" +
+	"  codergag inject [--project ID] [--file CLAUDE.md]   write a compact codebase map into a file\n" +
+	"  codergag register-instructions [--agent claude|all]   write tool instructions and register the MCP server\n" +
+	"  codergag doctor [--json]          health checks: graph, cache, daemon, config, storage\n" +
+	"  codergag config [show|get|set]   manage configuration\n" +
+	"  codergag ctx <add|search|show|export|status|profile|reset>   manage project context records\n" +
+	"  codergag hook <SessionStart|UserPromptSubmit>   Claude Code hook entry point (reads JSON on stdin)\n" +
+	"  codergag uninstall [--keep-db]   remove codeRAG components\n" +
+	"  codergag mcp                     start as MCP server (internal; use serve)\n" +
+	"\n" +
+	"Environment:\n" +
+	"  CODERAG_CONFIG                   path to config yaml\n" +
+	"  CODERAG_HTTP_ADDR                also serve the dashboard from serve (e.g. 127.0.0.1:8080)\n" +
+	"  CODERAG_MAINTENANCE_INTERVAL     scheduled optimization period (default 15m, 0 disables)\n"
 
 func main() {
 	cmd, args := "serve", os.Args[1:]
@@ -46,7 +60,9 @@ func main() {
 		}
 		cfg = loaded
 	}
-	cfg = configForCommand(cmd, cfg)
+	cfg = configForCommand(cmd, args, cfg)
+	activeCfg = cfg
+	applyMemoryLimit()
 	app, err := services.ApplicationFromConfig(&cfg)
 	if err != nil {
 		fail("init:", err)
@@ -65,6 +81,32 @@ func main() {
 		os.Exit(runEval(app, args))
 	case "maintenance":
 		os.Exit(runMaintenance(app))
+	case "session":
+		os.Exit(runSession(app, args))
+	case "inject":
+		os.Exit(runInject(app, args))
+	case "register-instructions":
+		os.Exit(runRegisterInstructions(app, args))
+	case "doctor":
+		os.Exit(runDoctor(app, args))
+	case "setup":
+		os.Exit(runSetup(app, args))
+	case "daemon":
+		os.Exit(runDaemon(app, args))
+	case "model":
+		os.Exit(runModel(args))
+	case "index":
+		os.Exit(runIndex(app, args))
+	case "config":
+		os.Exit(runConfig(args))
+	case "ctx":
+		os.Exit(runCtx(app, args))
+	case "hook":
+		os.Exit(runHook(app, args))
+	case "uninstall":
+		os.Exit(runUninstall(args))
+	case "mcp":
+		serve(app)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage)
 		os.Exit(2)
@@ -74,9 +116,26 @@ func main() {
 // configForCommand disables the background indexing daemon for read-only
 // commands. Otherwise `http` (often started from an arbitrary cwd such as
 // $HOME) would scan and index the default watch root "." and exhaust memory.
-func configForCommand(cmd string, cfg config.Config) config.Config {
+// Every command that only reads the graph or writes a file must be listed
+// here; `serve`, `watch`, and `index watch` intentionally keep the daemon.
+func configForCommand(cmd string, args []string, cfg config.Config) config.Config {
+	sub := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		sub = args[0]
+	}
+	// Only `index watch` keeps the daemon; every other index subcommand
+	// (run/status) is a one-shot read or write that must not start a
+	// background scanner from an arbitrary cwd.
+	if cmd == "index" && sub != "watch" {
+		cfg.Watch.Enabled = false
+		return cfg
+	}
 	switch cmd {
-	case "http", "status", "eval", "maintenance":
+	case "serve", "watch":
+		// keep the daemon
+	case "http", "status", "eval", "maintenance",
+		"session", "inject", "register-instructions", "doctor",
+		"setup", "daemon", "model", "config", "uninstall", "ctx", "hook":
 		cfg.Watch.Enabled = false
 	}
 	return cfg
@@ -151,5 +210,22 @@ func runHTTP(app *services.Application, args []string) {
 	fmt.Fprintf(os.Stderr, "agent view at http://%s\n", addr)
 	if err := srv.ListenAndServe(); err != nil {
 		fail("http:", err)
+	}
+}
+
+// applyMemoryLimit sets a soft Go heap limit so the GC works harder before the
+// process grows without bound. CODERAG_MEMORY_LIMIT_MB overrides the 1 GiB
+// default; 0 disables the limit.
+func applyMemoryLimit() {
+	mb := 1024
+	if v := os.Getenv("CODERAG_MEMORY_LIMIT_MB"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			fail("CODERAG_MEMORY_LIMIT_MB:", fmt.Errorf("invalid value %q", v))
+		}
+		mb = n
+	}
+	if mb > 0 {
+		debug.SetMemoryLimit(int64(mb) << 20)
 	}
 }

@@ -43,7 +43,27 @@ func rows(key string, items []map[string]any) map[string]any {
 
 func (r *ToolRegistry) handleIndexRepository(args map[string]any) (map[string]any, error) {
 	return r.app.Index.IndexRepository(getString(args, "project_id"), getString(args, "path"),
-		getBool(args, "incremental", true), getStringSlice(args, "ignore"))
+		getBool(args, "incremental", true), getStringSlice(args, "ignore"), getBool(args, "skip_graphify", false))
+}
+
+func (r *ToolRegistry) handleIndexProgress(args map[string]any) (map[string]any, error) {
+	progress := r.app.IndexProgress(getString(args, "project_id"))
+	if progress == nil {
+		return map[string]any{"project_id": getString(args, "project_id"), "finished": false, "phase": "idle"}, nil
+	}
+	return map[string]any{
+		"project_id":  progress.ProjectID,
+		"root":        progress.Root,
+		"phase":      progress.Phase,
+		"files_done": progress.FilesDone,
+		"files_total": progress.FilesTotal,
+		"functions":  progress.Functions,
+		"started_at": progress.StartedAt,
+		"updated_at": progress.UpdatedAt,
+		"finished":   progress.Finished,
+		"truncated":  progress.Truncated,
+		"error":      progress.Error,
+	}, nil
 }
 
 func (r *ToolRegistry) handleIndexFile(args map[string]any) (map[string]any, error) {
@@ -60,6 +80,24 @@ func (r *ToolRegistry) handleIndexFile(args map[string]any) (map[string]any, err
 		return nil, err
 	}
 	return map[string]any{"path": res.Path, "changed": res.Changed, "functions": res.Functions}, nil
+}
+
+func (r *ToolRegistry) handleIndexFiles(args map[string]any) (map[string]any, error) {
+	pid, project, err := r.resolveProjectID(args)
+	if err != nil {
+		return nil, err
+	}
+	root := getString(args, "root")
+	if root == "" {
+		if p, ok := project.Properties["path"].(string); ok && p != "" {
+			root = p
+		}
+	}
+	res, err := r.app.Index.IndexFiles(pid, root, getStringSlice(args, "files"), true, nil)
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 // ---- symbol lookup ----
@@ -97,6 +135,14 @@ func (r *ToolRegistry) handleFindString(args map[string]any) (map[string]any, er
 }
 func (r *ToolRegistry) handleSearchCodeGraph(args map[string]any) (map[string]any, error) {
 	res, err := r.app.Code.Search(getString(args, "project_id"), getString(args, "query"), limitOf(args), getBool(args, "include_generated", false))
+	if err != nil {
+		return nil, err
+	}
+	return rows("results", res), nil
+}
+
+func (r *ToolRegistry) handleSearchSemantic(args map[string]any) (map[string]any, error) {
+	res, err := r.app.Code.SearchSemantic(getString(args, "project_id"), getString(args, "query"), limitOf(args), getBool(args, "include_generated", false))
 	if err != nil {
 		return nil, err
 	}

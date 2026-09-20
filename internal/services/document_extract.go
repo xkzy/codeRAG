@@ -228,10 +228,10 @@ func (s *DocumentService) IndexDocument(projectID, path string) (map[string]any,
 
 	sections := splitDocumentSections(content)
 	for i, sec := range sections {
-		heading := sec["heading"].(string)
-		sectionContent := sec["content"].(string)
-		level, _ := sec["level"].(int)
-		lineStart, _ := sec["line_start"].(int)
+		heading := mapStrProp(sec, "heading")
+		sectionContent := mapStrProp(sec, "content")
+		level := mapIntProp(sec, "level")
+		lineStart := mapIntProp(sec, "line_start")
 		secNode, err := s.graph.UpsertNode("DocumentSection", map[string]any{
 			"project_id":  projectID,
 			"document_id": document.ID,

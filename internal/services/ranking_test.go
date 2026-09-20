@@ -70,7 +70,7 @@ func TestCodeSearchSplitsIdentifiersAndRanksNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := ApplicationInMemory()
-	if _, err := app.Index.IndexRepository("p", dir, true, nil); err != nil {
+	if _, err := app.Index.IndexRepository("p", dir, true, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	res, err := app.Code.Search("p", "parse packet", 10, false)

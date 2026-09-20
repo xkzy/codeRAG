@@ -65,7 +65,7 @@ func (d *ProjectDetector) scan(dir string, depth int, found *[]*ProjectIdentity)
 	if depth > d.depth || isIgnoreDir(filepath.Base(dir)) {
 		return
 	}
-	if isProjectRoot(dir) {
+	if !unsafeProjectRoot(dir) && isProjectRoot(dir) {
 		d.register(dir, found)
 		return
 	}
@@ -80,6 +80,9 @@ func (d *ProjectDetector) scan(dir string, depth int, found *[]*ProjectIdentity)
 		if !entry.IsDir() || isIgnoreDir(entry.Name()) || entry.Type()&os.ModeSymlink != 0 {
 			continue
 		}
+		if strings.HasPrefix(entry.Name(), ".") && unsafeProjectRoot(dir) {
+			continue
+		}
 		d.scan(filepath.Join(dir, entry.Name()), depth+1, found)
 	}
 }
@@ -89,7 +92,7 @@ func (d *ProjectDetector) register(root string, found *[]*ProjectIdentity) {
 	if err != nil {
 		return
 	}
-	id := stableProjectID(clean)
+	id := StableProjectID(clean)
 	d.mu.Lock()
 	existing := d.projects[id]
 	if existing != nil {
@@ -113,6 +116,16 @@ func (d *ProjectDetector) register(root string, found *[]*ProjectIdentity) {
 	}
 }
 
+func (d *ProjectDetector) Prune(active map[string]bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for id := range d.projects {
+		if !active[id] {
+			delete(d.projects, id)
+		}
+	}
+}
+
 func (d *ProjectDetector) Projects() []*ProjectIdentity {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -131,7 +144,7 @@ func (d *ProjectDetector) Get(root string) *ProjectIdentity {
 	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	if project := d.projects[stableProjectID(clean)]; project != nil {
+	if project := d.projects[StableProjectID(clean)]; project != nil {
 		return cloneProject(project)
 	}
 	var best *ProjectIdentity
@@ -176,6 +189,23 @@ func gitRootCommit(root string) (string, error) {
 	return git(root, "rev-parse", "HEAD")
 }
 
+// unsafeProjectRoot reports directories that must never be indexed as a single
+// project: the filesystem root and the user's home directory. Their children
+// are still scanned for real projects.
+func unsafeProjectRoot(dir string) bool {
+	clean := filepath.Clean(dir)
+	if clean == string(filepath.Separator) || clean == filepath.VolumeName(clean)+string(filepath.Separator) {
+		return true
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if resolved, err := filepath.EvalSymlinks(home); err == nil {
+			home = resolved
+		}
+		return clean == filepath.Clean(home)
+	}
+	return false
+}
+
 func isProjectRoot(dir string) bool {
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 		return true
@@ -188,7 +218,8 @@ func isProjectRoot(dir string) bool {
 	return false
 }
 
-func stableProjectID(root string) string {
+// StableProjectID returns the deterministic project id for a root path.
+func StableProjectID(root string) string {
 	clean, err := canonicalProjectRoot(root)
 	if err == nil {
 		root = clean

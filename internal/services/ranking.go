@@ -1,6 +1,7 @@
 package services
 
 import (
+	"strconv"
 	"strings"
 
 	"codergag/internal/models"
@@ -54,6 +55,40 @@ func rankNodes(ranker search.Ranker, nodes []*models.Node, query string, limit i
 func strProp(n *models.Node, key string) string {
 	s, _ := n.Properties[key].(string)
 	return s
+}
+
+// StrProp is the exported form of strProp, used by the CLI and HTTP layer.
+func StrProp(n *models.Node, key string) string { return strProp(n, key) }
+
+// DecodeUsage decodes a JSON-encoded per-tool usage blob.
+func DecodeUsage(blob string) map[string]*ToolUsage { return decodeUsage(blob) }
+
+// mapStrProp reads a string from a plain map[string]any (e.g. a parsed section).
+func mapStrProp(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	s, _ := m[key].(string)
+	return s
+}
+
+// mapIntProp reads an int from a plain map[string]any, tolerating float64
+// (JSON numbers) and string-encoded integers.
+func mapIntProp(m map[string]any, key string) int {
+	if m == nil {
+		return 0
+	}
+	switch v := m[key].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	case string:
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return 0
 }
 
 // SetRanker replaces the ranking strategy used by every search surface.

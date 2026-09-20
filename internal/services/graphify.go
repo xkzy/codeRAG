@@ -28,6 +28,17 @@ type GraphifyProgress struct {
 
 var globalProgress = &GraphifyProgress{}
 
+// Hard limits keep a single Graphify pass bounded no matter how large or
+// pathological the tree is (huge/binary files, files with thousands of
+// concepts, or a mis-rooted project).
+const (
+	graphifyMaxFiles           = 20000
+	graphifyMaxFileBytes       = 1 << 20
+	graphifyMaxConceptsPerFile = 64
+	graphifyMaxNodes           = 200000
+	graphifyMaxEdges           = 400000
+)
+
 func (p *GraphifyProgress) Update(fn func()) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -153,6 +164,12 @@ func (g *Graphify) extract() (*Graph, error) {
 			}
 			return nil
 		}
+		if !info.Mode().IsRegular() || info.Size() > graphifyMaxFileBytes {
+			return nil
+		}
+		if globalProgress.Snapshot().FilesSeen >= graphifyMaxFiles || len(graph.Nodes) >= graphifyMaxNodes || len(graph.Edges) >= graphifyMaxEdges {
+			return filepath.SkipAll
+		}
 		rel, _ := filepath.Rel(g.root, p)
 		globalProgress.Update(func() {
 			globalProgress.FilesSeen++
@@ -160,6 +177,9 @@ func (g *Graphify) extract() (*Graph, error) {
 		})
 		addNode(Node{ID: "file:" + rel, Label: rel, Kind: "file", File: rel})
 		concepts := extractConcepts(p)
+		if len(concepts) > graphifyMaxConceptsPerFile {
+			concepts = concepts[:graphifyMaxConceptsPerFile]
+		}
 		for _, c := range concepts {
 			c.File = rel
 			addNode(c)
@@ -462,21 +482,170 @@ func writeGraphHTML(g *Graph, path string) error {
 	nodesJSON, _ := json.Marshal(g.Nodes)
 	edgesJSON, _ := json.Marshal(g.Edges)
 	html := fmt.Sprintf(`<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>codeRAG Graph</title>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>codeRAG Graph</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;overflow:hidden}
+canvas{display:block;cursor:grab}
+#status{position:fixed;bottom:.5rem;left:50%%;transform:translateX(-50%%);background:#161b22cc;border:1px solid #30363d;border-radius:4px;padding:.25rem .75rem;font:system-ui,.75rem,sans-serif;font-size:.75rem;color:#8b949e;pointer-events:none;white-space:nowrap}
+#info{position:fixed;top:1rem;right:1rem;width:260px;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:.75rem;font-family:system-ui;font-size:.8rem;color:#c9d1d9;display:none}
+#info h3{color:#58a6ff;font-size:.85rem;margin-bottom:.4rem;word-break:break-all}
+#info .kv{display:flex;gap:.4rem;margin:.2rem 0;font-size:.75rem}
+#info .kv .k{color:#c9d1d9;min-width:50px}
+#info .kv .v{color:#8b949e;word-break:break-all}
+#info button{margin-top:.5rem;font:inherit;font-size:.75rem;background:transparent;border:1px solid #30363d;color:#8b949e;border-radius:4px;padding:.2rem .5rem;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="g"></canvas>
+<div id="status">loading…</div>
+<div id="info">
+  <h3 id="info-title"></h3>
+  <div id="info-rows"></div>
+  <button onclick="document.getElementById('info').style.display='none'">✕ close</button>
+</div>
 <script src="https://d3js.org/d3.v7.min.js"></script>
-<style>body{font-family:system-ui;background:#f7f7f9;margin:0}svg{background:#fff}</style></head>
-<body><h1>Knowledge Graph</h1><svg width="100%%" height="100%%"></svg>
 <script>
-const nodes=%s; const edges=%s;
-const svg=d3.select("svg"); const width=window.innerWidth; const height=window.innerHeight;
-const sim=d3.forceSimulation(nodes).force("link",d3.forceLink(edges).id(d=>d.id).distance(80)).force("charge",d3.forceManyBody().strength(-50)).force("center",d3.forceCenter(width/2,height/2));
-const link=svg.selectAll("line").data(edges).enter().append("line").attr("stroke","#999").attr("stroke-width",1);
-const node=svg.selectAll("circle").data(nodes).enter().append("circle").attr("r",5).attr("fill",d=>d.kind==="file"?"#2563eb":"#16a34a");
-const text=svg.selectAll("text").data(nodes).enter().append("text").text(d=>d.label).attr("font-size",10).attr("x",6).attr("y",3);
-sim.on("tick",()=>{link.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y).attr("x2",d=>d.target.x).attr("y2",d=>d.target.y);node.attr("cx",d=>d.x).attr("cy",d=>d.y);text.attr("x",d=>d.x).attr("y",d=>d.y);});
-</script></body></html>`, nodesJSON, edgesJSON)
+'use strict';
+const rawNodes = %s;
+const rawEdges = %s;
+
+const canvas = document.getElementById('g');
+const ctx = canvas.getContext('2d');
+let transform = d3.zoomIdentity;
+let simNodes = [], simEdges = [], qt = null;
+let hoveredNode = null, selectedNode = null, rafPending = false;
+
+function resize() {
+  canvas.width  = window.innerWidth  * devicePixelRatio;
+  canvas.height = window.innerHeight * devicePixelRatio;
+  canvas.style.width  = window.innerWidth  + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+}
+resize();
+window.addEventListener('resize', () => { resize(); schedDraw(); });
+
+const zoom = d3.zoom().scaleExtent([0.03, 12]).on('zoom', e => { transform = e.transform; schedDraw(); });
+d3.select(canvas).call(zoom);
+
+function schedDraw() {
+  if (!rafPending) { rafPending = true; requestAnimationFrame(draw); }
+}
+
+function draw() {
+  rafPending = false;
+  const dpr = devicePixelRatio;
+  const w = canvas.width, h = canvas.height;
+  const cw = w / dpr, ch = h / dpr;
+  ctx.save();
+  ctx.clearRect(0, 0, w, h);
+  ctx.scale(dpr, dpr);
+  ctx.save();
+  ctx.translate(transform.x, transform.y);
+  ctx.scale(transform.k, transform.k);
+
+  const vx0 = -transform.x / transform.k, vy0 = -transform.y / transform.k;
+  const vx1 = (cw - transform.x) / transform.k, vy1 = (ch - transform.y) / transform.k;
+
+  // edges
+  ctx.strokeStyle = '#30363d';
+  ctx.lineWidth = 1 / transform.k;
+  ctx.globalAlpha = 0.45;
+  ctx.beginPath();
+  for (const e of simEdges) {
+    const s = e.source, t = e.target;
+    if (!s || !t || s.x == null) continue;
+    if (s.x < vx0 - 100 && t.x < vx0 - 100) continue;
+    if (s.x > vx1 + 100 && t.x > vx1 + 100) continue;
+    ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y);
+  }
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // nodes
+  const nr = Math.max(2.5, 5 / transform.k);
+  for (const n of simNodes) {
+    if (n.x < vx0 - 20 || n.x > vx1 + 20 || n.y < vy0 - 20 || n.y > vy1 + 20) continue;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, n === selectedNode ? nr * 1.8 : (n === hoveredNode ? nr * 1.4 : nr), 0, 2 * Math.PI);
+    ctx.fillStyle = n === selectedNode ? '#f0a500'
+      : n === hoveredNode ? '#ffffff'
+      : (n.kind === 'file' ? '#2563eb' : '#16a34a');
+    ctx.fill();
+  }
+
+  // labels
+  const showAll = transform.k > 1.5 || simNodes.length < 200;
+  ctx.font = Math.max(8, 10 / transform.k) + 'px system-ui';
+  ctx.fillStyle = '#c9d1d9';
+  for (const n of simNodes) {
+    if (n.x < vx0 - 20 || n.x > vx1 + 20 || n.y < vy0 - 20 || n.y > vy1 + 20) continue;
+    if (showAll || (n._deg || 0) >= 10 || n === selectedNode || n === hoveredNode) {
+      ctx.fillText(n.label || n.id, n.x + nr + 2, n.y + 3 / transform.k);
+    }
+  }
+  ctx.restore(); ctx.restore();
+}
+
+function buildQT() { qt = d3.quadtree().x(d => d.x).y(d => d.y).addAll(simNodes); }
+
+function nodeAt(ex, ey) {
+  if (!qt) return null;
+  const sx = (ex - transform.x) / transform.k, sy = (ey - transform.y) / transform.k;
+  return qt.find(sx, sy, Math.max(10, 5 / transform.k)) || null;
+}
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const n = nodeAt(e.clientX - rect.left, e.clientY - rect.top);
+  if (n !== hoveredNode) { hoveredNode = n; schedDraw(); }
+  canvas.style.cursor = n ? 'pointer' : 'grab';
+});
+
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  const n = nodeAt(e.clientX - rect.left, e.clientY - rect.top);
+  selectedNode = n;
+  if (n) {
+    document.getElementById('info-title').textContent = n.label || n.id;
+    document.getElementById('info-rows').innerHTML = [
+      ['kind', n.kind || '—'],
+      ['degree', n._deg || 0],
+      ['file', n.file || '—'],
+    ].map(([k,v]) => '<div class="kv"><span class="k">'+k+'</span><span class="v">'+String(v)+'</span></div>').join('');
+    document.getElementById('info').style.display = 'block';
+  } else {
+    document.getElementById('info').style.display = 'none';
+  }
+  schedDraw();
+});
+
+// build simulation
+const deg = {};
+for (const e of rawEdges) { deg[e.source]=(deg[e.source]||0)+1; deg[e.target]=(deg[e.target]||0)+1; }
+simNodes = rawNodes.map(n => ({...n, _deg: deg[n.id]||0}));
+const nodeIdx = Object.fromEntries(simNodes.map(n => [n.id, n]));
+simEdges = rawEdges.map(e => ({source: nodeIdx[e.source]||e.source, target: nodeIdx[e.target]||e.target}));
+
+d3.forceSimulation(simNodes)
+  .force('link', d3.forceLink(simEdges).id(d => d.id).distance(60).strength(0.3))
+  .force('charge', d3.forceManyBody().strength(-30).distanceMax(200))
+  .force('center', d3.forceCenter(window.innerWidth/2, window.innerHeight/2))
+  .alphaDecay(0.02).velocityDecay(0.4)
+  .on('tick', () => { buildQT(); schedDraw(); })
+  .on('end',  () => { buildQT(); schedDraw(); });
+
+document.getElementById('status').textContent =
+  rawNodes.length + ' nodes · ' + rawEdges.length + ' edges · scroll to zoom · drag to pan · click to inspect';
+</script>
+</body>
+</html>`, nodesJSON, edgesJSON)
 	return os.WriteFile(path, []byte(html), 0o644)
 }
+
 
 func writeGraphReport(g *Graph, root, path string) error {
 	var b strings.Builder

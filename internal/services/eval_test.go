@@ -25,7 +25,7 @@ func indexSample(t *testing.T) (*Application, string) {
 		t.Fatal(err)
 	}
 	app := ApplicationInMemory()
-	if _, err := app.Index.IndexRepository("p", dir, true, nil); err != nil {
+	if _, err := app.Index.IndexRepository("p", dir, true, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	return app, dir

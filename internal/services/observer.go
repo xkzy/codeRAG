@@ -116,11 +116,16 @@ func (o *Observer) Stop() {
 		}
 		watcher := o.watcher
 		done := o.doneCh
+		started := o.started
 		o.mu.Unlock()
 		if watcher != nil {
 			_ = watcher.Close()
 		}
 		if done != nil {
+			<-done
+		}
+		// Wait for loop to finish if it was started
+		if started {
 			<-done
 		}
 	})
@@ -220,8 +225,12 @@ func (o *Observer) emitForPath(path string, op fsnotify.Op) {
 	if info.IsDir() {
 		o.mu.Lock()
 		watcher := o.watcher
+		started := o.started
 		o.mu.Unlock()
-		if op&(fsnotify.Create|fsnotify.Rename) != 0 && watcher != nil {
+		if !started || watcher == nil {
+			return
+		}
+		if op&(fsnotify.Create|fsnotify.Rename) != 0 {
 			o.mu.Lock()
 			_ = o.watchDirLocked(watcher, path)
 			o.mu.Unlock()

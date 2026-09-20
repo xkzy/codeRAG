@@ -68,6 +68,8 @@ type EventEngine struct {
 	queue       chan Event
 	jobs        chan eventJob
 	buffer      []Event
+	bufferHead  int
+	bufferLen   int
 	maxBuf      int
 	workerCount int
 	stopCh      chan struct{}
@@ -88,6 +90,7 @@ func NewEventEngine(maxBuf int, workerCounts ...int) *EventEngine {
 	return &EventEngine{
 		queue:       make(chan Event, maxBuf),
 		jobs:        make(chan eventJob, maxBuf),
+		buffer:      make([]Event, maxBuf),
 		maxBuf:      maxBuf,
 		workerCount: workerCount,
 		metrics:     map[string]int{"worker_count": workerCount},
@@ -161,19 +164,29 @@ func (e *EventEngine) Emit(event Event) {
 		event.ID = fmt.Sprintf("event-%d-%d", event.Timestamp.UnixNano(), seq)
 	}
 	e.metrics["events_seen"]++
-	if len(e.buffer) >= e.maxBuf {
+	if e.bufferLen == e.maxBuf {
 		e.metrics["events_dropped"]++
-		e.buffer = e.buffer[1:]
+		e.bufferHead = (e.bufferHead + 1) % e.maxBuf
+		e.bufferLen--
 	}
-	e.buffer = append(e.buffer, event)
+	index := (e.bufferHead + e.bufferLen) % e.maxBuf
+	e.buffer[index] = event
+	e.bufferLen++
 	e.mu.Unlock()
 
+	// Block until event is queued or engine stops
 	select {
 	case e.queue <- event:
 	default:
-		e.mu.Lock()
-		e.metrics["events_dropped"]++
-		e.mu.Unlock()
+		// Queue is full, block with timeout to avoid deadlock
+		select {
+		case e.queue <- event:
+		case <-time.After(100 * time.Millisecond):
+			e.mu.Lock()
+			e.metrics["events_dropped"]++
+			e.mu.Unlock()
+		case <-e.stopCh:
+		}
 	}
 }
 
@@ -210,6 +223,7 @@ func (e *EventEngine) run(stopCh, doneCh chan struct{}) {
 	for {
 		select {
 		case <-stopCh:
+			e.drain()
 			workers.Wait()
 			return
 		case event, ok := <-e.queue:
@@ -261,8 +275,10 @@ func (e *EventEngine) drain() {
 func (e *EventEngine) Snapshot() []Event {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	out := make([]Event, len(e.buffer))
-	copy(out, e.buffer)
+	out := make([]Event, e.bufferLen)
+	for i := 0; i < e.bufferLen; i++ {
+		out[i] = e.buffer[(e.bufferHead+i)%e.maxBuf]
+	}
 	return out
 }
 

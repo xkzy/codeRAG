@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -9,13 +8,12 @@ import (
 	"sort"
 	"strings"
 
+	"codergag/internal/cli"
 	"codergag/internal/services"
 )
 
 func printJSON(w io.Writer, v any) {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	enc.Encode(v)
+	cli.PrintJSON(w, v)
 }
 
 func runStatus(app *services.Application, args []string) int {

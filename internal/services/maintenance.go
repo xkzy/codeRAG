@@ -56,6 +56,11 @@ func (a *Application) RunMaintenance() (map[string]any, error) {
 		}
 	}
 	report["cache_entries_purged"] = purged
+	if a.Cache != nil {
+		if exactPurged, err := a.Cache.PurgeExact(a.Cache.ExactLimit()); err == nil {
+			report["cache_entries_purged"] = purged + exactPurged
+		}
+	}
 
 	rolled, _ := rollUpUsage(a.Graph, keepUsageSessions)
 	report["usage_sessions_rolled_up"] = rolled

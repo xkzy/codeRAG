@@ -54,7 +54,12 @@ func (s *HTTPServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, dashboardHTML)
+	fmt.Fprint(w, unifiedHTML)
+}
+
+// handleGraphifyPage redirects to the unified SPA so existing bookmarks work.
+func (s *HTTPServer) handleGraphifyPage(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/", http.StatusMovedPermanently)
 }
 
 func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -227,7 +232,7 @@ func (s *HTTPServer) handleGraphifyProgress(w http.ResponseWriter, r *http.Reque
 			return
 		case <-ticker.C:
 			p := globalProgress.Snapshot()
-			if p.StartedAt.IsZero() {
+			if p.StartedAt.IsZero() || p.Done {
 				// This process has not indexed anything; report the last stored run.
 				if run := s.latestGraphifyRun(""); run != nil {
 					p.Phase, p.Done = "last run", true
@@ -244,157 +249,6 @@ func (s *HTTPServer) handleGraphifyProgress(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-func (s *HTTPServer) handleGraphifyPage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, graphifyPageHTML)
-}
-
-const dashboardHTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>codeRAG Agent View</title>
-<style>
-body { font-family: system-ui, sans-serif; margin: 2rem; background: #f7f7f9; color: #222; }
-h1 { margin-bottom: .25rem; }
-.sub { color: #666; margin-bottom: 1.5rem; }
-.card { background: #fff; border: 1px solid #e2e2e6; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
-input, select { font: inherit; padding: .4rem; }
-button { font: inherit; padding: .4rem .8rem; background: #2563eb; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
-button:hover { background: #1d4ed8; }
-#memories, #thoughts { white-space: pre-wrap; word-break: break-word; background: #1e1e24; color: #d4d4d4; padding: 1rem; border-radius: 6px; min-height: 4rem; }
-.meta { color: #666; font-size: .9rem; }
-</style>
-</head>
-<body>
-<h1>Agent View</h1>
-<p class="sub">Visualize memories and thinking across projects.</p>
-
-<div class="card">
-<label>Project ID <input id="project" placeholder="p"></label>
-<button onclick="load()">Load</button>
-</div>
-
-<div class="card">
-<h2>Memories</h2>
-<input id="memQ" placeholder="search memories" onkeydown="if(event.key==='Enter')load()">
-<div id="memories">select a project</div>
-</div>
-
-<div class="card">
-<h2>Thinking</h2>
-<div id="thoughts">select a project</div>
-</div>
-
-<script>
-let pid = '';
-function load() {
-  pid = document.getElementById('project').value.trim();
-  if (!pid) return;
-  fetch('/api/memories?project_id=' + encodeURIComponent(pid))
-    .then(r => r.json()).then(data => {
-      document.getElementById('memories').textContent = JSON.stringify(data, null, 2);
-    }).catch(e => document.getElementById('memories').textContent = e.message);
-  fetch('/api/thoughts?project_id=' + encodeURIComponent(pid))
-    .then(r => r.json()).then(data => {
-      let summary = {};
-      for (let [k, v] of Object.entries(data.kinds)) { summary[k] = v.length; }
-      document.getElementById('thoughts').textContent = JSON.stringify(summary, null, 2) + '\\n\\n' + JSON.stringify(data, null, 2);
-    }).catch(e => document.getElementById('thoughts').textContent = e.message);
-}
-</script>
-</body>
-</html>`
-
-const graphifyPageHTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Graphify - Real-time Knowledge Graph</title>
-<script src="https://d3js.org/d3.v7.min.js"></script>
-<style>
-body { font-family: system-ui, sans-serif; margin: 0; background: #0d1117; color: #c9d1d9; }
-#header { padding: 1rem 2rem; background: #161b22; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
-h1 { margin: 0; font-size: 1.2rem; color: #58a6ff; }
-#status { font-size: 0.85rem; color: #8b949e; }
-#viz { width: 100%; height: calc(100vh - 50px); position: relative; }
-svg { width: 100%; height: 100%; }
-.node { cursor: pointer; }
-.node circle { stroke: #30363d; stroke-width: 1.5; }
-.node.file circle { fill: #2563eb; }
-.node.concept circle { fill: #16a34a; }
-.link { stroke: #30363d; stroke-opacity: 0.6; }
-#panel { position: absolute; top: 1rem; right: 1rem; width: 280px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; font-size: 0.85rem; }
-#panel h3 { margin: 0 0 0.5rem; color: #58a6ff; font-size: 0.95rem; }
-#panel .metric { display: flex; justify-content: space-between; margin: 0.25rem 0; }
-#panel .metric span:last-child { color: #58a6ff; font-weight: 600; }
-#log { max-height: 120px; overflow-y: auto; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 0.5rem; margin-top: 0.5rem; font-family: monospace; font-size: 0.75rem; color: #8b949e; }
-</style>
-</head>
-<body>
-<div id="header">
-<h1>Graphify</h1>
-<div id="status">connecting...</div>
-</div>
-<div id="viz">
-<svg></svg>
-<div id="panel">
-<h3>Progress</h3>
-<div class="metric"><span>Phase</span><span id="phase">-</span></div>
-<div class="metric"><span>Files</span><span id="files">0</span></div>
-<div class="metric"><span>Nodes</span><span id="nodes">0</span></div>
-<div class="metric"><span>Edges</span><span id="edges">0</span></div>
-<div class="metric"><span>Communities</span><span id="communities">0</span></div>
-<div id="log"></div>
-</div>
-</div>
-<script>
-const svg = d3.select("svg");
-const width = window.innerWidth;
-const height = window.innerHeight - 50;
-const sim = d3.forceSimulation().force("link", d3.forceLink().id(d => d.id).distance(60)).force("charge", d3.forceManyBody().strength(-40)).force("center", d3.forceCenter(width/2, height/2));
-const link = svg.selectAll("line").data([]).enter().append("line").attr("class", "link").attr("stroke-width", 1);
-const node = svg.selectAll("circle").data([]).enter().append("circle").attr("class", "node").attr("r", 5);
-const label = svg.selectAll("text").data([]).enter().append("text").attr("font-size", 9).attr("fill", "#c9d1d9").attr("x", 8).attr("y", 3);
-sim.on("tick", () => {
-  link.attr("x1", d => d.source.x).attr("y1", d => d.source.y).attr("x2", d => d.target.x).attr("y2", d => d.target.y);
-  node.attr("cx", d => d.x).attr("cy", d => d.y);
-  label.attr("x", d => d.x).attr("y", d => d.y);
-});
-const es = new EventSource("/api/graphify/progress");
-es.onmessage = e => {
-  const p = JSON.parse(e.data);
-  document.getElementById("phase").textContent = p.phase || "-";
-  document.getElementById("files").textContent = p.files_seen || 0;
-  document.getElementById("nodes").textContent = p.nodes || 0;
-  document.getElementById("edges").textContent = p.edges || 0;
-  document.getElementById("communities").textContent = p.communities || 0;
-  document.getElementById("status").textContent = p.done ? "done" : (p.phase || "running") + "...";
-  if (p.error) {
-    const log = document.getElementById("log");
-    log.innerHTML += "ERROR: " + p.error + "\\n";
-    log.scrollTop = log.scrollHeight;
-  }
-};
-fetch("/api/graphify/graph.json").then(r => r.json()).then(g => {
-  if (!g || !g.nodes) return;
-  const nodes = g.nodes.map(n => ({...n}));
-  const links = (g.edges || []).map(e => ({source: e.source, target: e.target}));
-  sim.nodes(nodes);
-  sim.force("link").links(links);
-  sim.alpha(1).restart();
-  link.data(links).enter().append("line").attr("class", "link").attr("stroke-width", 1);
-  node.data(nodes).enter().append("circle").attr("class", "node").attr("r", 5).attr("fill", d => d.kind === "file" ? "#2563eb" : "#16a34a");
-  label.data(nodes).enter().append("text").text(d => d.label).attr("font-size", 9).attr("fill", "#c9d1d9").attr("x", 8).attr("y", 3);
-}).catch(() => {});
-window.addEventListener("resize", () => {
-  sim.force("center", d3.forceCenter(window.innerWidth/2, window.innerHeight/2));
-  sim.alpha(0.3).restart();
-});
-</script>
-</body>
-</html>`
-
 func toInt(v any) int {
 	switch n := v.(type) {
 	case int:
@@ -406,3 +260,411 @@ func toInt(v any) int {
 	}
 	return 0
 }
+
+// unifiedHTML is the single-page application that replaces both the old
+// dashboard (/) and the old graphify page (/graphify). It renders a canvas-
+// based force-directed graph using D3 simulation for layout (no SVG DOM nodes),
+// with quadtree hit-testing for click/hover, plus list views for memories and
+// thoughts. The /graphify route issues a 301 redirect here.
+const unifiedHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>codeRAG</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#0d1117;color:#c9d1d9;display:flex;height:100vh;overflow:hidden}
+/* ── sidebar ── */
+#sidebar{width:220px;min-width:220px;background:#161b22;border-right:1px solid #30363d;display:flex;flex-direction:column;padding:1rem;gap:.75rem;overflow-y:auto}
+#sidebar h1{font-size:1rem;color:#58a6ff;letter-spacing:.05em;user-select:none}
+#sidebar select,#sidebar input{width:100%;font:inherit;font-size:.8rem;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:.35rem .5rem}
+#sidebar select:focus,#sidebar input:focus{outline:none;border-color:#58a6ff}
+.nav-btn{display:block;width:100%;text-align:left;font:inherit;font-size:.85rem;padding:.4rem .6rem;border:none;border-radius:4px;cursor:pointer;background:transparent;color:#8b949e;transition:background .1s,color .1s}
+.nav-btn:hover{background:#21262d;color:#c9d1d9}
+.nav-btn.active{background:#21262d;color:#58a6ff;font-weight:600}
+#sidebar hr{border:none;border-top:1px solid #30363d}
+#node-detail{flex:1;overflow-y:auto;font-size:.78rem;color:#8b949e;display:none;word-break:break-all}
+#node-detail h3{color:#58a6ff;font-size:.82rem;margin-bottom:.35rem}
+#node-detail .kv{display:flex;gap:.4rem;margin:.2rem 0}
+#node-detail .kv .k{color:#c9d1d9;min-width:50px}
+/* ── main ── */
+#main{flex:1;position:relative;overflow:hidden}
+.view{position:absolute;inset:0;display:none}
+.view.active{display:block}
+/* canvas */
+#canvas-view canvas{display:block;width:100%;height:100%}
+/* list view */
+#list-view{overflow-y:auto;padding:1.5rem;display:flex;flex-direction:column;gap:1rem}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem}
+.card h2{font-size:.9rem;color:#58a6ff;margin-bottom:.5rem}
+.card pre{font-size:.72rem;white-space:pre-wrap;word-break:break-word;color:#8b949e;max-height:260px;overflow-y:auto;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:.5rem;margin-top:.4rem}
+/* status bar */
+#statusbar{position:absolute;bottom:.5rem;left:50%;transform:translateX(-50%);background:#161b22cc;border:1px solid #30363d;border-radius:4px;padding:.25rem .75rem;font-size:.75rem;color:#8b949e;pointer-events:none;white-space:nowrap;max-width:80vw;overflow:hidden;text-overflow:ellipsis}
+/* search */
+#search-wrap{position:absolute;top:.75rem;left:50%;transform:translateX(-50%);z-index:10;display:none}
+#search-wrap input{font:inherit;font-size:.82rem;background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:.35rem .7rem;width:220px}
+#search-wrap input:focus{outline:none;border-color:#58a6ff}
+</style>
+</head>
+<body>
+<div id="sidebar">
+  <h1>⬡ codeRAG</h1>
+  <select id="proj-select"><option value="">— project —</option></select>
+  <hr>
+  <button class="nav-btn active" data-view="graph">⬡ Graph</button>
+  <button class="nav-btn" data-view="memories">◈ Memories</button>
+  <button class="nav-btn" data-view="thoughts">◎ Thoughts</button>
+  <hr>
+  <div id="node-detail"></div>
+</div>
+<div id="main">
+  <div id="canvas-view" class="view active">
+    <canvas id="graph-canvas"></canvas>
+    <div id="search-wrap"><input id="search" placeholder="search nodes… (Ctrl+F)" autocomplete="off"></div>
+  </div>
+  <div id="list-view" class="view">
+    <div id="list-content"><p style="color:#8b949e;padding:1rem">Select a project</p></div>
+  </div>
+  <div id="statusbar">no project selected</div>
+</div>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+'use strict';
+// ── routing ───────────────────────────────────────────────────────────────────
+let currentView = 'graph', currentProject = '';
+
+function setView(name) {
+  currentView = name;
+  document.querySelectorAll('.nav-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === name));
+  document.getElementById('canvas-view').classList.toggle('active', name === 'graph');
+  document.getElementById('list-view').classList.toggle('active', name !== 'graph');
+  document.getElementById('search-wrap').style.display = name === 'graph' ? '' : 'none';
+  if (name !== 'graph') loadList(name);
+}
+
+function setProject(id) {
+  currentProject = id;
+  clearNodeDetail();
+  if (currentView === 'graph') loadGraph();
+  else loadList(currentView);
+}
+
+document.querySelectorAll('.nav-btn').forEach(b =>
+  b.addEventListener('click', () => setView(b.dataset.view)));
+document.getElementById('proj-select').addEventListener('change',
+  e => setProject(e.target.value));
+
+// ── projects ──────────────────────────────────────────────────────────────────
+fetch('/api/projects').then(r => r.json()).then(ps => {
+  const sel = document.getElementById('proj-select');
+  ps.forEach(p => {
+    const id = p.id || p.project_id || '';
+    const o = document.createElement('option');
+    o.value = id; o.textContent = id;
+    sel.appendChild(o);
+  });
+  if (ps.length === 1) {
+    sel.value = ps[0].id || ps[0].project_id || '';
+    setProject(sel.value);
+  }
+}).catch(() => {});
+
+// ── list views (memories / thoughts) ─────────────────────────────────────────
+function loadList(view) {
+  const el = document.getElementById('list-content');
+  if (!currentProject) {
+    el.innerHTML = '<p style="color:#8b949e;padding:1rem">Select a project</p>';
+    return;
+  }
+  el.innerHTML = '<p style="color:#8b949e;padding:1rem">Loading…</p>';
+  if (view === 'memories') {
+    fetch('/api/memories?project_id=' + encodeURIComponent(currentProject) + '&limit=100')
+      .then(r => r.json()).then(renderMemories)
+      .catch(e => { el.innerHTML = '<p style="color:#f85149">Error: ' + escH(String(e)) + '</p>'; });
+  } else {
+    fetch('/api/thoughts?project_id=' + encodeURIComponent(currentProject))
+      .then(r => r.json()).then(renderThoughts)
+      .catch(e => { el.innerHTML = '<p style="color:#f85149">Error: ' + escH(String(e)) + '</p>'; });
+  }
+}
+
+function renderMemories(items) {
+  const el = document.getElementById('list-content');
+  if (!items || !items.length) {
+    el.innerHTML = '<p style="color:#8b949e;padding:1rem">No memories</p>';
+    return;
+  }
+  el.innerHTML = items.map(m =>
+    '<div class="card"><h2>' + escH(m.title || m.id || 'Memory') + '</h2>' +
+    '<pre>' + escH(JSON.stringify(m, null, 2)) + '</pre></div>'
+  ).join('');
+}
+
+function renderThoughts(data) {
+  const el = document.getElementById('list-content');
+  const kinds = data.kinds || {};
+  const parts = Object.entries(kinds).map(([k, items]) =>
+    '<div class="card"><h2>' + escH(k) + ' (' + items.length + ')</h2>' +
+    items.map(it => '<pre>' + escH(JSON.stringify(it, null, 2)) + '</pre>').join('') +
+    '</div>'
+  );
+  el.innerHTML = parts.length
+    ? parts.join('')
+    : '<p style="color:#8b949e;padding:1rem">No thoughts</p>';
+}
+
+function escH(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// ── node detail panel ─────────────────────────────────────────────────────────
+function showNodeDetail(n) {
+  const el = document.getElementById('node-detail');
+  el.style.display = 'block';
+  const rows = [
+    ['kind', n.kind || '—'],
+    ['degree', n._deg || 0],
+    ['file', n.file || '—'],
+  ];
+  el.innerHTML = '<h3>' + escH(n.label || n.id) + '</h3>' +
+    rows.map(([k, v]) =>
+      '<div class="kv"><span class="k">' + k + '</span><span>' + escH(String(v)) + '</span></div>'
+    ).join('');
+}
+
+function clearNodeDetail() {
+  const el = document.getElementById('node-detail');
+  el.style.display = 'none';
+  el.innerHTML = '';
+}
+
+// ── canvas graph renderer ─────────────────────────────────────────────────────
+const canvas = document.getElementById('graph-canvas');
+const ctx = canvas.getContext('2d');
+let simNodes = [], simEdges = [], sim = null, qt = null;
+let transform = d3.zoomIdentity;
+let hoveredNode = null, selectedNode = null;
+let rafPending = false;
+let searchTerm = '';
+
+function resizeCanvas() {
+  const r = canvas.parentElement.getBoundingClientRect();
+  canvas.width = r.width * devicePixelRatio;
+  canvas.height = r.height * devicePixelRatio;
+  canvas.style.width = r.width + 'px';
+  canvas.style.height = r.height + 'px';
+}
+resizeCanvas();
+window.addEventListener('resize', () => { resizeCanvas(); schedDraw(); });
+
+// zoom / pan
+const zoom = d3.zoom()
+  .scaleExtent([0.03, 12])
+  .on('zoom', e => { transform = e.transform; schedDraw(); });
+d3.select(canvas).call(zoom);
+
+function schedDraw() {
+  if (!rafPending) { rafPending = true; requestAnimationFrame(draw); }
+}
+
+function draw() {
+  rafPending = false;
+  const w = canvas.width, h = canvas.height;
+  const dpr = devicePixelRatio;
+  const cw = w / dpr, ch = h / dpr;
+
+  ctx.save();
+  ctx.clearRect(0, 0, w, h);
+  ctx.scale(dpr, dpr);
+
+  // apply pan/zoom
+  ctx.save();
+  ctx.translate(transform.x, transform.y);
+  ctx.scale(transform.k, transform.k);
+
+  // viewport bounds in sim coordinates
+  const vx0 = -transform.x / transform.k;
+  const vy0 = -transform.y / transform.k;
+  const vx1 = (cw - transform.x) / transform.k;
+  const vy1 = (ch - transform.y) / transform.k;
+
+  // edges
+  ctx.strokeStyle = '#30363d';
+  ctx.lineWidth = 1 / transform.k;
+  ctx.globalAlpha = 0.45;
+  ctx.beginPath();
+  for (const e of simEdges) {
+    const s = e.source, t = e.target;
+    if (!s || !t || s.x == null) continue;
+    // rough viewport cull: skip if both endpoints far outside
+    if (s.x < vx0 - 100 && t.x < vx0 - 100) continue;
+    if (s.x > vx1 + 100 && t.x > vx1 + 100) continue;
+    ctx.moveTo(s.x, s.y);
+    ctx.lineTo(t.x, t.y);
+  }
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // nodes
+  const nr = Math.max(2.5, 5 / transform.k);
+  for (const n of simNodes) {
+    if (n.x < vx0 - 20 || n.x > vx1 + 20 || n.y < vy0 - 20 || n.y > vy1 + 20) continue;
+    const isSelected = n === selectedNode;
+    const isHovered = n === hoveredNode;
+    const isSearch = searchTerm && (n.label || n.id || '').toLowerCase().includes(searchTerm);
+
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, isSelected ? nr * 1.8 : (isHovered ? nr * 1.4 : nr), 0, 2 * Math.PI);
+    ctx.fillStyle = isSelected ? '#f0a500'
+      : isSearch ? '#e879f9'
+      : isHovered ? '#ffffff'
+      : (n.kind === 'file' ? '#2563eb' : '#16a34a');
+    ctx.fill();
+    if (isSelected || isSearch) {
+      ctx.strokeStyle = isSelected ? '#f0a500' : '#e879f9';
+      ctx.lineWidth = 2 / transform.k;
+      ctx.globalAlpha = 0.35;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, nr * 2.8, 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // labels
+  const showAllLabels = transform.k > 1.5 || simNodes.length < 200;
+  ctx.font = Math.max(8, 10 / transform.k) + 'px system-ui';
+  ctx.fillStyle = '#c9d1d9';
+  for (const n of simNodes) {
+    if (n.x < vx0 - 20 || n.x > vx1 + 20 || n.y < vy0 - 20 || n.y > vy1 + 20) continue;
+    const label = n.label || n.id;
+    const isSearch = searchTerm && label.toLowerCase().includes(searchTerm);
+    if (showAllLabels || (n._deg || 0) >= 10 || isSearch || n === selectedNode || n === hoveredNode) {
+      ctx.fillText(label, n.x + nr + 2, n.y + 3 / transform.k);
+    }
+  }
+
+  ctx.restore(); // undo translate/scale
+  ctx.restore(); // undo dpr scale
+}
+
+// quadtree hit testing
+function buildQT() {
+  qt = d3.quadtree().x(d => d.x).y(d => d.y).addAll(simNodes);
+}
+
+function nodeAt(ex, ey) {
+  if (!qt) return null;
+  const sx = (ex - transform.x) / transform.k;
+  const sy = (ey - transform.y) / transform.k;
+  const r = Math.max(10, 5 / transform.k);
+  return qt.find(sx, sy, r) || null;
+}
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const n = nodeAt(e.clientX - rect.left, e.clientY - rect.top);
+  if (n !== hoveredNode) { hoveredNode = n; schedDraw(); }
+  canvas.style.cursor = n ? 'pointer' : 'grab';
+});
+
+canvas.addEventListener('click', e => {
+  const rect = canvas.getBoundingClientRect();
+  const n = nodeAt(e.clientX - rect.left, e.clientY - rect.top);
+  selectedNode = n;
+  if (n) {
+    showNodeDetail(n);
+    setStatus((n.kind === 'file' ? '📄' : '◆') + ' ' + (n.label || n.id) + ' · degree ' + (n._deg || 0));
+  } else {
+    clearNodeDetail();
+  }
+  schedDraw();
+});
+
+// search
+const searchInput = document.getElementById('search');
+searchInput.addEventListener('input', e => {
+  searchTerm = e.target.value.trim().toLowerCase();
+  schedDraw();
+});
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'f' && currentView === 'graph') {
+    e.preventDefault();
+    searchInput.focus();
+  }
+  if (e.key === 'Escape') { searchInput.value = ''; searchTerm = ''; schedDraw(); }
+});
+
+// status bar
+function setStatus(msg) {
+  document.getElementById('statusbar').textContent = msg;
+}
+
+// SSE progress
+let sse = null;
+function startSSE() {
+  if (sse) { sse.close(); sse = null; }
+  sse = new EventSource('/api/graphify/progress');
+  sse.onmessage = e => {
+    const p = JSON.parse(e.data);
+    if (!selectedNode) {
+      setStatus(p.done
+        ? '✓ ' + p.nodes + ' nodes · ' + p.edges + ' edges · ' + p.communities + ' communities'
+        : (p.phase || 'running') + '…');
+    }
+    if (p.done) { if (sse) { sse.close(); sse = null; } if (!simNodes.length) loadGraph(); }
+  };
+  sse.onerror = () => { if (sse) { sse.close(); sse = null; } };
+}
+
+function loadGraph() {
+  let url = '/api/graphify/graph.json';
+  if (currentProject) url += '?project_id=' + encodeURIComponent(currentProject);
+  setStatus('Loading graph…');
+  fetch(url).then(r => r.json()).then(g => {
+    if (!g || !g.nodes || !g.nodes.length) {
+      setStatus('No graph data — run graphify first');
+      return;
+    }
+    // compute degree for label and hit-test priority
+    const deg = {};
+    for (const e of (g.edges || [])) {
+      deg[e.source] = (deg[e.source] || 0) + 1;
+      deg[e.target] = (deg[e.target] || 0) + 1;
+    }
+    simNodes = g.nodes.map(n => ({ ...n, _deg: deg[n.id] || 0 }));
+    const nodeIdx = Object.fromEntries(simNodes.map(n => [n.id, n]));
+    simEdges = (g.edges || []).map(e => ({
+      source: nodeIdx[e.source] || e.source,
+      target: nodeIdx[e.target] || e.target,
+    }));
+
+    const cw = canvas.clientWidth, ch = canvas.clientHeight;
+    if (sim) sim.stop();
+    sim = d3.forceSimulation(simNodes)
+      .force('link', d3.forceLink(simEdges).id(d => d.id).distance(60).strength(0.3))
+      .force('charge', d3.forceManyBody().strength(-30).distanceMax(200))
+      .force('center', d3.forceCenter(cw / 2, ch / 2))
+      .alphaDecay(0.02)
+      .velocityDecay(0.4)
+      .on('tick', () => { buildQT(); schedDraw(); })
+      .on('end',  () => { buildQT(); schedDraw(); });
+
+    const total = g.total_nodes || g.nodes.length;
+    const cap = total > g.nodes.length ? ' (top ' + g.nodes.length + ' of ' + total + ')' : '';
+    setStatus(g.nodes.length + ' nodes · ' + (g.edges || []).length + ' edges' + cap);
+    startSSE();
+  }).catch(err => setStatus('Error: ' + err));
+}
+
+// initialise search bar visibility and kick off SSE
+document.getElementById('search-wrap').style.display = '';
+startSSE();
+</script>
+</body>
+</html>`

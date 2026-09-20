@@ -31,7 +31,7 @@ type Handler struct{}
 `,
 	})
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, false, nil)
+	app.Index.IndexRepository("p", dir, false, nil, false)
 
 	fns, _ := app.Graph.FindNodes("Function", map[string]any{"project_id": "p"})
 	var handleID string
@@ -80,7 +80,7 @@ func TestResolveCallsBareNameFallback(t *testing.T) {
 		"a.go": "package x\nfunc Process() {}\nfunc Run() { Process() }\n",
 	})
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, false, nil)
+	app.Index.IndexRepository("p", dir, false, nil, false)
 
 	fns, _ := app.Graph.FindNodes("Function", map[string]any{"project_id": "p"})
 	var runID string
@@ -212,7 +212,7 @@ func (h *Handler) Handle() { h.svc.Process() }
 `,
 	})
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, false, nil)
+	app.Index.IndexRepository("p", dir, false, nil, false)
 
 	fns, _ := app.Graph.FindNodes("Function", map[string]any{"project_id": "p"})
 	var processID, handleID string
@@ -253,7 +253,7 @@ func Run() { Helper() }
 `,
 	})
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, false, nil)
+	app.Index.IndexRepository("p", dir, false, nil, false)
 
 	fns, _ := app.Graph.FindNodes("Function", map[string]any{"project_id": "p"})
 	var helperID, runID string

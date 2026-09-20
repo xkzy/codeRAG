@@ -29,8 +29,14 @@ type ProjectConfig struct {
 }
 
 type IndexingConfig struct {
-	Incremental bool     `yaml:"incremental" xml:"incremental"`
-	Ignore      []string `yaml:"ignore" xml:"ignore"`
+	Incremental  bool     `yaml:"incremental" xml:"incremental"`
+	Ignore       []string `yaml:"ignore" xml:"ignore"`
+	SkipGraphify bool     `yaml:"skip_graphify" xml:"skip_graphify"`
+}
+
+type GraphConfig struct {
+	CacheNodes int `yaml:"cache_nodes" xml:"cache_nodes"`
+	CacheEdges int `yaml:"cache_edges" xml:"cache_edges"`
 }
 
 type VerificationConfig struct {
@@ -57,6 +63,7 @@ type WatchConfig struct {
 	MaxWorkers       int      `yaml:"max_workers" xml:"max_workers"`
 	QueueSize        int      `yaml:"queue_size" xml:"queue_size"`
 	MaxWatchDirs     int      `yaml:"max_watch_dirs" xml:"max_watch_dirs"`
+	MaxDirtyFiles    int      `yaml:"max_dirty_files" xml:"max_dirty_files"`
 	ProjectScanDepth int      `yaml:"project_scan_depth" xml:"project_scan_depth"`
 	ProjectRoots     []string `yaml:"project_roots" xml:"project_roots"`
 }
@@ -85,6 +92,27 @@ func (w WatchConfig) DebounceDuration() time.Duration {
 	return d
 }
 
+// ContextConfig sets the token budgets for hook-injected context digests.
+// Zero values fall back to the defaults.
+type ContextConfig struct {
+	SessionBudget int `yaml:"session_budget,omitempty" xml:"session_budget,omitempty"`
+	PromptBudget  int `yaml:"prompt_budget,omitempty" xml:"prompt_budget,omitempty"`
+}
+
+func (c ContextConfig) Session() int {
+	if c.SessionBudget > 0 {
+		return c.SessionBudget
+	}
+	return 1500
+}
+
+func (c ContextConfig) Prompt() int {
+	if c.PromptBudget > 0 {
+		return c.PromptBudget
+	}
+	return 500
+}
+
 type Config struct {
 	Database     DatabaseConfig     `yaml:"database" xml:"database"`
 	Projects     []ProjectConfig    `yaml:"projects" xml:"projects"`
@@ -93,6 +121,8 @@ type Config struct {
 	Storage      string             `yaml:"storage,omitempty" xml:"storage,omitempty"`
 	Cache        cache.CacheConfig  `yaml:"cache,omitempty" xml:"cache,omitempty"`
 	Verification VerificationConfig `yaml:"verification,omitempty" xml:"verification,omitempty"`
+	Graph        GraphConfig        `yaml:"graph,omitempty" xml:"graph,omitempty"`
+	Context      ContextConfig      `yaml:"context,omitempty" xml:"context,omitempty"`
 }
 
 func Default() Config {
@@ -106,8 +136,9 @@ func Default() Config {
 		},
 		Projects: []ProjectConfig{},
 		Indexing: IndexingConfig{
-			Incremental: true,
-			Ignore:      []string{".git", "build", "node_modules"},
+			Incremental:  true,
+			Ignore:       []string{".git", "build", "node_modules"},
+			SkipGraphify: false,
 		},
 		Watch: WatchConfig{
 			Enabled:          true,
@@ -117,11 +148,16 @@ func Default() Config {
 			MaxWorkers:       4,
 			QueueSize:        1024,
 			MaxWatchDirs:     256,
+			MaxDirtyFiles:    10000,
 			ProjectScanDepth: 3,
 			ProjectRoots:     []string{"."},
 		},
 		Storage: "sqlite",
 		Cache:   cache.DefaultConfig(),
+		Graph: GraphConfig{
+			CacheNodes: 1024,
+			CacheEdges: 1024,
+		},
 	}
 }
 
@@ -187,6 +223,9 @@ func Load(path string) (Config, error) {
 	if cfg.Watch.MaxWatchDirs <= 0 {
 		cfg.Watch.MaxWatchDirs = 256
 	}
+	if cfg.Watch.MaxDirtyFiles <= 0 {
+		cfg.Watch.MaxDirtyFiles = 10000
+	}
 	if cfg.Watch.ProjectScanDepth <= 0 {
 		cfg.Watch.ProjectScanDepth = 3
 	}
@@ -202,8 +241,20 @@ func Load(path string) (Config, error) {
 	if cfg.Cache.Semantic.MaxResults == 0 {
 		cfg.Cache.Semantic.MaxResults = 5
 	}
+	if cfg.Cache.Semantic.MaxEntries <= 0 {
+		cfg.Cache.Semantic.MaxEntries = 10000
+	}
+	if cfg.Cache.Exact.MaxEntries <= 0 {
+		cfg.Cache.Exact.MaxEntries = 10000
+	}
 	if cfg.Cache.TTL.Seconds == 0 {
 		cfg.Cache.TTL.Seconds = 86400
+	}
+	if cfg.Graph.CacheNodes <= 0 {
+		cfg.Graph.CacheNodes = 1024
+	}
+	if cfg.Graph.CacheEdges <= 0 {
+		cfg.Graph.CacheEdges = 1024
 	}
 	return cfg, nil
 }

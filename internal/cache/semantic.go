@@ -14,20 +14,27 @@ type SemanticCache struct {
 }
 
 func NewSemanticCache(cfg SemanticConfig) *SemanticCache {
+	if cfg.MaxEntries <= 0 {
+		cfg.MaxEntries = 10000
+	}
 	return &SemanticCache{
-		entries: make([]*CacheEntry, 0),
+		entries: make([]*CacheEntry, 0, cfg.MaxEntries),
 		config:  cfg,
 	}
 }
 
 func (s *SemanticCache) Index(entry *CacheEntry, query string) {
-	if !s.config.Enabled {
+	if !s.config.Enabled || entry == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry.Embedding = embedQuery(query)
 	s.entries = append(s.entries, entry)
+	if excess := len(s.entries) - s.config.MaxEntries; excess > 0 {
+		copy(s.entries, s.entries[excess:])
+		s.entries = s.entries[:s.config.MaxEntries]
+	}
 }
 
 func (s *SemanticCache) Search(query string, projectID, repoID, commit, binaryHash string, maxResults int) *CacheEntry {

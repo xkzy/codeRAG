@@ -54,6 +54,101 @@ type CodeIndexService struct {
 	graph         graph.GraphRepository
 	cache         *cache.CacheManager
 	parserVersion string
+	progressMap   map[string]*IndexProgress
+	progressMu    sync.Mutex
+}
+
+// IndexProgress is a snapshot of a long-running index pass. It is updated
+// incrementally by the walk and read by the `index_progress` MCP tool so an
+// agent can report on an indexing operation that takes longer than one turn.
+type IndexProgress struct {
+	mu            sync.Mutex
+	ProjectID     string `json:"project_id"`
+	Root          string `json:"root"`
+	Phase         string `json:"phase"`          // "walk", "resolve", "graphify", "done"
+	FilesTotal    int    `json:"files_total"`    // estimated total, 0 until the walk finishes
+	FilesDone     int    `json:"files_done"`
+	Functions     int    `json:"functions"`
+	StartedAt     string `json:"started_at"`
+	UpdatedAt     string `json:"updated_at"`
+	Finished      bool   `json:"finished"`
+	Truncated     bool   `json:"truncated"`
+	Error         string `json:"error,omitempty"`
+}
+
+// snapshot returns a copy of the progress state safe for concurrent readers.
+func (p *IndexProgress) snapshot() IndexProgress {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return IndexProgress{
+		ProjectID: p.ProjectID, Root: p.Root, Phase: p.Phase,
+		FilesTotal: p.FilesTotal, FilesDone: p.FilesDone, Functions: p.Functions,
+		StartedAt: p.StartedAt, UpdatedAt: p.UpdatedAt, Finished: p.Finished,
+		Truncated: p.Truncated, Error: p.Error,
+	}
+}
+
+func (p *IndexProgress) set(phase string, filesDone, functions int, truncated bool, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.Phase = phase
+	p.FilesDone = filesDone
+	p.Functions = functions
+	p.Truncated = truncated
+	p.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err != nil {
+		p.Error = err.Error()
+	}
+	if phase == "done" {
+		p.Finished = true
+	}
+}
+
+// progressFor returns the progress tracker for a project, creating one if it
+// does not exist. Trackers are retained for 24h so a late `index_progress`
+// call can still report the final totals.
+func (s *CodeIndexService) progressFor(projectID, root string) *IndexProgress {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	if s.progressMap == nil {
+		s.progressMap = map[string]*IndexProgress{}
+	}
+	if p, ok := s.progressMap[projectID]; ok {
+		// reuse the existing tracker for a new pass
+		p.mu.Lock()
+		p.Finished = false
+		p.Error = ""
+		p.Phase = "walk"
+		p.FilesTotal = 0
+		p.FilesDone = 0
+		p.Functions = 0
+		p.Truncated = false
+		p.StartedAt = time.Now().UTC().Format(time.RFC3339)
+		p.UpdatedAt = p.StartedAt
+		p.mu.Unlock()
+		return p
+	}
+	p := &IndexProgress{ProjectID: projectID, Root: root, Phase: "walk",
+		StartedAt: time.Now().UTC().Format(time.RFC3339)}
+	p.UpdatedAt = p.StartedAt
+	s.progressMap[projectID] = p
+	return p
+}
+
+// Progress returns the most recent index-progress snapshot for a project, or
+// nil if no indexing has run for it.
+func (s *CodeIndexService) Progress(projectID string) *IndexProgress {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	if s.progressMap == nil {
+		return nil
+	}
+	p := s.progressMap[projectID]
+	if p == nil {
+		return nil
+	}
+	snap := p.snapshot()
+	return &snap
 }
 
 func (s *CodeIndexService) SetCache(cm *cache.CacheManager) {
@@ -66,7 +161,11 @@ func NewCodeIndexService(g graph.GraphRepository) *CodeIndexService {
 
 func (s *CodeIndexService) ParserVersion() string { return s.parserVersion }
 
-func (s *CodeIndexService) IndexRepository(projectID, root string, incremental bool, ignore []string) (map[string]any, error) {
+// MaxIndexFiles bounds how many source files one full index pass will visit,
+// so a mis-rooted project (e.g. a huge monorepo or $HOME) cannot exhaust memory.
+var MaxIndexFiles = 50000
+
+func (s *CodeIndexService) IndexRepository(projectID, root string, incremental bool, ignore []string, skipGraphify bool) (map[string]any, error) {
 	path, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -92,8 +191,11 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 		excluded[ig] = true
 	}
 
+	progress := s.progressFor(projectID, path)
+
 	var results []*IndexedFile
 	discovered := make(map[string]bool)
+	truncated := false
 	walkErr := filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -114,22 +216,32 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 				return nil
 			}
 		}
+		if len(discovered) >= MaxIndexFiles {
+			truncated = true
+			return filepath.SkipAll
+		}
 		discovered[p] = true
 		indexed, err := s.indexFile(project.ID, projectID, p, incremental)
 		if err == nil {
 			results = append(results, indexed)
+			progress.set("walk", len(results), sumFuncs(results), truncated, nil)
 		}
 		return nil
 	})
 	if walkErr != nil {
+		progress.FilesTotal = len(discovered)
+		progress.set("done", len(results), sumFuncs(results), truncated, walkErr)
 		return nil, walkErr
 	}
+
+	progress.FilesTotal = len(discovered)
+	progress.set("resolve", len(results), sumFuncs(results), truncated, nil)
 
 	existingFiles, _ := s.graph.FindNodes("SourceFile", map[string]any{"project_id": projectID})
 	var deletedFiles []*models.Node
 	for _, nf := range existingFiles {
-		nfPath, _ := nf.Properties["path"].(string)
-		if strings.HasPrefix(nfPath, path) && !discovered[nfPath] {
+		nfPath := strProp(nf, "path")
+		if !truncated && strings.HasPrefix(nfPath, path) && !discovered[nfPath] {
 			deletedFiles = append(deletedFiles, nf)
 		}
 	}
@@ -150,8 +262,8 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 	s.resolveGraph(projectID)
 
 	// Run graphify as part of indexing - builds the knowledge graph
-	// automatically so the repository is always searchable.
-	// Skipped when an incremental pass found nothing new and a prior run exists.
+	// automatically so the repository is always searchable. Incremental passes
+	// reuse the latest stored run to avoid rebuilding and retaining full graphs.
 	changedCount := 0
 	for _, r := range results {
 		if r.Changed {
@@ -159,22 +271,26 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 		}
 	}
 	prior, _ := s.graph.FindNodes("GraphifyRun", map[string]any{"project_id": projectID})
-	skipGraphify := incremental && changedCount == 0 && len(deletedFiles) == 0 && len(prior) > 0
+	skipGraphifyInternal := incremental && len(prior) > 0
+	if skipGraphify {
+		skipGraphifyInternal = true
+	}
 	var graphErr error
 	var graphOut *Graph
-	if !skipGraphify {
+	if !skipGraphifyInternal {
+		progress.set("graphify", len(results), sumFuncs(results), truncated, nil)
 		graphOut, graphErr = NewGraphify(path, false, false).Run()
 	}
-	if graph := graphOut; !skipGraphify && graphErr == nil {
+	if graph := graphOut; !skipGraphifyInternal && graphErr == nil {
 		data, _ := json.Marshal(graph)
 		s.graph.UpsertNode("GraphifyRun", map[string]any{
 			"project_id": projectID,
-			"ran_at":     time.Now().UTC().Format(time.RFC3339),
 		}, map[string]any{
 			"graph_json":  string(data),
 			"nodes":       len(graph.Nodes),
 			"edges":       len(graph.Edges),
 			"communities": len(graph.Communities),
+			"ran_at":      time.Now().UTC().Format(time.RFC3339),
 		})
 	}
 
@@ -186,11 +302,13 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 			changed++
 		}
 	}
+	progress.set("done", len(results), funcs, truncated, graphErr)
 	return map[string]any{
 		"project_id":     projectID,
 		"files_seen":     len(results),
 		"files_changed":  changed,
 		"files_deleted":  len(deletedFiles),
+		"truncated":      truncated,
 		"functions":      funcs,
 		"parser_version": s.parserVersion,
 	}, nil
@@ -225,6 +343,9 @@ func (s *CodeIndexService) IndexFiles(projectID, root string, files []string, in
 		return nil, err
 	}
 
+	progress := s.progressFor(projectID, path)
+	progress.set("walk", 0, 0, false, nil)
+
 	var results []*IndexedFile
 	var failed []string
 	deleted := 0
@@ -240,6 +361,7 @@ func (s *CodeIndexService) IndexFiles(projectID, root string, files []string, in
 			continue
 		}
 		results = append(results, indexed)
+		progress.set("walk", len(results), sumFuncs(results), false, nil)
 	}
 
 	funcs := 0
@@ -251,8 +373,10 @@ func (s *CodeIndexService) IndexFiles(projectID, root string, files []string, in
 		}
 	}
 	if changed > 0 || deleted > 0 {
+		progress.set("resolve", len(results), funcs, false, nil)
 		s.resolveGraph(projectID)
 	}
+	progress.set("done", len(results), funcs, false, errors.Join(errorsFromStrings(failed)...))
 	return map[string]any{
 		"project_id":     projectID,
 		"files_seen":     len(results),
@@ -282,6 +406,13 @@ func (s *CodeIndexService) removeFile(projectID, filePath string) {
 }
 
 func (s *CodeIndexService) indexFile(projectNodeID, projectID, filePath string, incremental bool) (*IndexedFile, error) {
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > maxIndexFileBytes {
+		return &IndexedFile{Path: filePath}, nil
+	}
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
@@ -538,6 +669,8 @@ var (
 		sha string
 		at  time.Time
 	}{}
+	commitCacheTTL        = 2 * time.Second
+	maxCommitCacheEntries = 256
 )
 
 // headCommit returns the checkout's HEAD commit (best effort, cached briefly so
@@ -548,7 +681,8 @@ func (s *CodeIndexService) headCommit(root string) string {
 	}
 	commitMu.Lock()
 	defer commitMu.Unlock()
-	if c, ok := commitCache[root]; ok && time.Since(c.at) < 2*time.Second {
+	pruneCommitCache(time.Now())
+	if c, ok := commitCache[root]; ok && time.Since(c.at) < commitCacheTTL {
 		return c.sha
 	}
 	sha, _ := git(root, "rev-parse", "HEAD")
@@ -556,7 +690,29 @@ func (s *CodeIndexService) headCommit(root string) string {
 		sha string
 		at  time.Time
 	}{sha, time.Now()}
+	pruneCommitCache(time.Now())
 	return sha
+}
+
+func pruneCommitCache(now time.Time) {
+	for root, cached := range commitCache {
+		if now.Sub(cached.at) >= commitCacheTTL {
+			delete(commitCache, root)
+		}
+	}
+	if len(commitCache) <= maxCommitCacheEntries {
+		return
+	}
+	for len(commitCache) > maxCommitCacheEntries {
+		var oldestRoot string
+		var oldest time.Time
+		for root, cached := range commitCache {
+			if oldestRoot == "" || cached.at.Before(oldest) {
+				oldestRoot, oldest = root, cached.at
+			}
+		}
+		delete(commitCache, oldestRoot)
+	}
 }
 
 func errorsFromStrings(msgs []string) []error {
@@ -565,4 +721,13 @@ func errorsFromStrings(msgs []string) []error {
 		errs = append(errs, errors.New(m))
 	}
 	return errs
+}
+
+// sumFuncs reports the total function count across a batch of indexed files.
+func sumFuncs(results []*IndexedFile) int {
+	n := 0
+	for _, r := range results {
+		n += r.Functions
+	}
+	return n
 }

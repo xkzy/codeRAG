@@ -84,8 +84,14 @@ func TestLoadDefaultsWhenMissing(t *testing.T) {
 	if cfg.Storage != "sqlite" {
 		t.Fatalf("storage default: %s", cfg.Storage)
 	}
-	if cfg.Cache.Semantic.Threshold != 0.92 {
-		t.Fatalf("threshold default: %v", cfg.Cache.Semantic.Threshold)
+	if cfg.Cache.Semantic.MaxResults != 5 {
+		t.Fatalf("max_results default: %d", cfg.Cache.Semantic.MaxResults)
+	}
+	if cfg.Cache.Semantic.MaxEntries != 10000 {
+		t.Fatalf("max_entries default: %d", cfg.Cache.Semantic.MaxEntries)
+	}
+	if cfg.Cache.Exact.MaxEntries != 10000 {
+		t.Fatalf("exact max_entries default: %d", cfg.Cache.Exact.MaxEntries)
 	}
 }
 
@@ -100,5 +106,23 @@ func TestPartialWatchKeepsDefaults(t *testing.T) {
 	}
 	if !cfg.Watch.IndexOnChange {
 		t.Fatal("index_on_change default lost")
+	}
+	if cfg.Watch.MaxDirtyFiles != 10000 {
+		t.Fatalf("max_dirty_files default lost: %d", cfg.Watch.MaxDirtyFiles)
+	}
+}
+
+func TestContextBudgetDefaults(t *testing.T) {
+	c := Default().Context
+	if c.Session() != 1500 || c.Prompt() != 500 {
+		t.Fatalf("defaults: %d %d", c.Session(), c.Prompt())
+	}
+	p := writeConfig(t, "context:\n  session_budget: 900\n  prompt_budget: 200\n", ".yaml")
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Context.Session() != 900 || cfg.Context.Prompt() != 200 {
+		t.Fatalf("overrides not applied: %+v", cfg.Context)
 	}
 }

@@ -3,8 +3,10 @@ package services
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
 
 func TestGraphifyRun(t *testing.T) {
 	dir := t.TempDir()
@@ -122,3 +124,41 @@ func write(t *testing.T, dir, rel, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestWriteGraphHTMLUsesCanvas(t *testing.T) {
+	g := &Graph{
+		Nodes: []Node{
+			{ID: "a", Label: "Alpha", Kind: "file"},
+			{ID: "b", Label: "Beta", Kind: "concept"},
+		},
+		Edges: []Edge{
+			{Source: "a", Target: "b", Relation: "defines", Confidence: "EXTRACTED", ConfidenceScore: 1.0},
+		},
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "graph.html")
+	if err := writeGraphHTML(g, path); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "<canvas") {
+		t.Error("graph.html must use <canvas> not SVG")
+	}
+	if strings.Contains(body, "<svg") {
+		t.Error("graph.html must not use SVG")
+	}
+	if !strings.Contains(body, "forceSimulation") {
+		t.Error("graph.html must use d3.forceSimulation")
+	}
+	if !strings.Contains(body, "requestAnimationFrame") {
+		t.Error("graph.html must use requestAnimationFrame for canvas rendering")
+	}
+	if !strings.Contains(body, `"Alpha"`) {
+		t.Error("graph.html must inline node labels")
+	}
+}
+

@@ -3,3 +3,9 @@
 .codergag.db
 *.db
 .cctx/
+
+# generated output
+graphify-out/
+
+# backup files
+*.bak

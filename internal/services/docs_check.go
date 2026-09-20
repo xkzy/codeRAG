@@ -296,7 +296,7 @@ func (s *DocumentService) CheckDocs(projectID string, limit int) (map[string]any
 			report = append(report, entry)
 		}
 	}
-	sort.SliceStable(report, func(i, j int) bool { return report[i]["warnings"].(int) > report[j]["warnings"].(int) })
+	sort.SliceStable(report, func(i, j int) bool { return mapIntProp(report[i], "warnings") > mapIntProp(report[j], "warnings") })
 	return map[string]any{
 		"documents_checked":     len(docs),
 		"documents_with_issues": len(report),

@@ -98,7 +98,7 @@ func TestCallsResolveAcrossFilesRegardlessOfOrder(t *testing.T) {
 	write("a.go", "package x\nfunc Caller() { Callee(); local() }\nfunc local() {}\n")
 	write("b.go", "package x\nfunc Callee() { local() }\nfunc local() {}\n")
 	app := ApplicationInMemory()
-	if _, err := app.Index.IndexRepository("p", dir, true, nil); err != nil {
+	if _, err := app.Index.IndexRepository("p", dir, true, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	real, _ := filepath.EvalSymlinks(dir)
@@ -110,7 +110,7 @@ func TestCallsResolveAcrossFilesRegardlessOfOrder(t *testing.T) {
 
 	// Rewriting the callee file replaces its nodes; the caller must re-link on the next index.
 	write("b.go", "package x\nfunc Callee() {}\nfunc Extra() {}\n")
-	if _, err := app.Index.IndexRepository("p", dir, true, nil); err != nil {
+	if _, err := app.Index.IndexRepository("p", dir, true, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	got = callTargets(t, app, "p", "Caller")
@@ -129,7 +129,7 @@ func TestMethodsWithSameNameStayDistinct(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := ApplicationInMemory()
-	if _, err := app.Index.IndexRepository("p", dir, true, nil); err != nil {
+	if _, err := app.Index.IndexRepository("p", dir, true, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	fns, _ := app.Graph.FindNodes("Function", map[string]any{"project_id": "p", "name": "run"})

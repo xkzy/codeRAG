@@ -18,11 +18,62 @@ func NewCodeGraphService(g graph.GraphRepository) *CodeGraphService {
 	return &CodeGraphService{graph: g, ranker: search.NewBM25()}
 }
 
+// NewCodeGraphServiceHybrid returns a service whose retrieval fuses BM25 keyword
+// matching with a bag-of-words vector ranker via reciprocal rank fusion. It is
+// used when semantic retrieval is requested; the plain constructor keeps the
+// keyword-only behavior for callers that do not need vector similarity.
+func NewCodeGraphServiceHybrid(g graph.GraphRepository) *CodeGraphService {
+	return &CodeGraphService{
+		graph:  g,
+		ranker: &search.Hybrid{Rankers: []search.Ranker{search.NewBM25(), search.NewVectorRanker()}},
+	}
+}
+
 // Search ranks code entities (functions, classes, structs, modules, files) by
 // relevance to a free-text query. Names count most; identifiers are split so
 // "parse packet" finds ParsePacket. Generated code is hidden unless
 // includeGenerated is set.
 func (s *CodeGraphService) Search(projectID, query string, limit int, includeGenerated bool) ([]map[string]any, error) {
+	nodes, err := s.corpus(projectID, includeGenerated)
+	if err != nil {
+		return nil, err
+	}
+	return rankNodes(s.ranker, nodes, query, limit, func(n *models.Node) []search.Field {
+		return []search.Field{
+			{Text: strProp(n, "name"), Weight: 3},
+			{Text: strProp(n, "owner"), Weight: 1.5},
+			{Text: strProp(n, "qualified_name"), Weight: 1},
+			{Text: strProp(n, "path"), Weight: 0.5},
+		}
+	}), nil
+}
+
+// SearchSemantic ranks the same corpus but fuses BM25 keyword matching with a
+// bag-of-words vector similarity via reciprocal rank fusion. It surfaces
+// semantically related identifiers (e.g. "cleanup" -> "teardown") that keyword
+// search misses, while still ranking exact name matches highly.
+func (s *CodeGraphService) SearchSemantic(projectID, query string, limit int, includeGenerated bool) ([]map[string]any, error) {
+	nodes, err := s.corpus(projectID, includeGenerated)
+	if err != nil {
+		return nil, err
+	}
+	ranker := s.ranker
+	if _, ok := ranker.(*search.Hybrid); !ok {
+		ranker = &search.Hybrid{Rankers: []search.Ranker{search.NewBM25(), search.NewVectorRanker()}}
+	}
+	return rankNodes(ranker, nodes, query, limit, func(n *models.Node) []search.Field {
+		return []search.Field{
+			{Text: strProp(n, "name"), Weight: 3},
+			{Text: strProp(n, "owner"), Weight: 1.5},
+			{Text: strProp(n, "qualified_name"), Weight: 1},
+			{Text: strProp(n, "path"), Weight: 0.5},
+		}
+	}), nil
+}
+
+// corpus gathers every indexable code entity for a project in one pass so the
+// ranker sees the full document set (needed for document-frequency statistics).
+func (s *CodeGraphService) corpus(projectID string, includeGenerated bool) ([]*models.Node, error) {
 	var nodes []*models.Node
 	for _, kind := range []string{"Function", "Class", "Struct", "Module", "SourceFile"} {
 		found, err := s.graph.FindNodes(kind, map[string]any{"project_id": projectID})
@@ -36,14 +87,7 @@ func (s *CodeGraphService) Search(projectID, query string, limit int, includeGen
 			nodes = append(nodes, n)
 		}
 	}
-	return rankNodes(s.ranker, nodes, query, limit, func(n *models.Node) []search.Field {
-		return []search.Field{
-			{Text: strProp(n, "name"), Weight: 3},
-			{Text: strProp(n, "owner"), Weight: 1.5},
-			{Text: strProp(n, "qualified_name"), Weight: 1},
-			{Text: strProp(n, "path"), Weight: 0.5},
-		}
-	}), nil
+	return nodes, nil
 }
 
 func Present(node *models.Node) map[string]any {

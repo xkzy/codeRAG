@@ -13,6 +13,9 @@ import (
 
 const systemProject = "_system"
 
+// SystemProject is the project id used for cross-process usage bookkeeping.
+const SystemProject = systemProject
+
 // ToolUsage accumulates how one tool has been used.
 type ToolUsage struct {
 	Calls        int     `json:"calls"`

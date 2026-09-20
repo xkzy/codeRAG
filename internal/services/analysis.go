@@ -25,7 +25,7 @@ func (s *AnalysisService) Complexity(projectID, functionID string) (map[string]a
 	}
 	score := 1
 	details := map[string]int{"if": 0, "for": 0, "while": 0, "case": 0, "catch": 0, "boolean": 0}
-	path, _ := fn.Properties["path"].(string)
+	path := strProp(fn, "path")
 	if path != "" {
 		text, err := os.ReadFile(path)
 		if err == nil {
@@ -225,7 +225,7 @@ func (s *AnalysisService) DeadImports(projectID string, limit int) ([]map[string
 	}
 	var results []map[string]any
 	for _, source := range files {
-		path, _ := source.Properties["path"].(string)
+		path := strProp(source, "path")
 		if path == "" {
 			continue
 		}
@@ -266,7 +266,7 @@ func (s *AnalysisService) ModuleSummary(projectID, query string, limit int) (map
 	q := strings.ToLower(query)
 	var filtered []*models.Node
 	for _, n := range files {
-		path, _ := n.Properties["path"].(string)
+		path := strProp(n, "path")
 		if query == "" || strings.Contains(strings.ToLower(path), q) {
 			filtered = append(filtered, n)
 		}
@@ -315,7 +315,7 @@ func (s *AnalysisService) Signature(projectID string, parameterCount *int, langu
 			}
 		}
 		if language != "" {
-			lang, _ := n.Properties["language"].(string)
+			lang := strProp(n, "language")
 			if lang != language {
 				continue
 			}
@@ -338,7 +338,7 @@ func (s *AnalysisService) EntryPoints(projectID string, limit int) ([]map[string
 	}
 	var results []map[string]any
 	for _, n := range fns {
-		name, _ := n.Properties["name"].(string)
+		name := strProp(n, "name")
 		if entrySet[name] || strings.HasPrefix(name, "main") || strings.HasPrefix(name, "on_") || strings.HasPrefix(name, "handle_") {
 			results = append(results, Present(n))
 			if len(results) >= limit {
@@ -381,8 +381,8 @@ func (s *AnalysisService) RelatedTests(projectID, functionName string, limit int
 	fn := strings.ToLower(functionName)
 	var results []map[string]any
 	for _, n := range fns {
-		path, _ := n.Properties["path"].(string)
-		name, _ := n.Properties["name"].(string)
+		path := strProp(n, "path")
+		name := strProp(n, "name")
 		rel := path
 		if r, err := filepath.Rel(root, path); err == nil && root != "" {
 			rel = r

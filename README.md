@@ -43,7 +43,24 @@ The server uses stdio MCP. The CLI command is `codergag`. Main tools include `fi
 
 Cache tools include `cache_lookup`, `cache_store`, `cache_invalidate`, `cache_stats`, `cache_explain`, `get_cached_analysis`, `refresh_analysis`, `ensure_fresh`, and `prepare_context`.
 
+Search tools include `search_code_graph` (BM25 keyword) and `search_semantic` (BM25 + vector fusion via reciprocal rank fusion). Indexing exposes `index_repository`, `index_file`, `index_files`, and `index_progress` so a long-running index pass can be reported across agent turns.
+
 Responses are bounded and include provenance, evidence, and confidence where available. `query_graph` is an expert-only guarded read-only query and requires a project predicate. The server exposes no arbitrary shell, debugger, network, privilege, or destructive-file tool.
+
+## Context records and hooks
+
+`codergag ctx` manages durable project context (decisions, conventions, tasks, notes) stored as graph memories:
+
+```bash
+codergag ctx add -kind decision -title "Use SQLite" -pin "single binary, no server"
+codergag ctx search sqlite
+codergag ctx status        # record counts and the token cost of the session digest
+codergag ctx export        # Markdown, grouped by kind
+codergag ctx profile set style terse
+codergag ctx reset -yes
+```
+
+`codergag setup --hooks` registers Claude Code hooks (`SessionStart`, `UserPromptSubmit`) that inject a token-budgeted digest: pinned records, decisions, and the records relevant to each prompt. Budgets are `context.session_budget` (default 1500) and `context.prompt_budget` (default 500) tokens. `codergag uninstall` removes only the hooks it added.
 
 ## Data and safety model
 

@@ -67,9 +67,16 @@ func (r *ToolRegistry) registerAll() {
 		"ignore":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Additional directories to ignore."},
 	}), append(append([]string{}, requiredBase...), "path"), r.handleIndexRepository)
 
+	r.register("index_progress", "CodeGraph semantic operation: index progress - returns the live snapshot of the most recent index pass for a project (phase, files done/total, functions, error). Useful for reporting on indexing that takes longer than one agent turn.", baseProps(map[string]any{}), requiredBase, r.handleIndexProgress)
+
 	r.register("index_file", "CodeGraph semantic operation: index file", baseProps(map[string]any{
 		"path": map[string]any{"type": "string", "description": "File path to index."},
 	}), append(requiredBase, "path"), r.handleIndexFile)
+
+	r.register("index_files", "CodeGraph semantic operation: index files - indexes a specific set of files incrementally, removing files that no longer exist on disk. Returns per-file errors instead of silently discarding them.", baseProps(map[string]any{
+		"root":   map[string]any{"type": "string", "description": "Repository root path."},
+		"files":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File paths to index."},
+	}), append(requiredBase, "root", "files"), r.handleIndexFiles)
 
 	r.register("find_symbol", "CodeGraph semantic operation: find symbol", baseProps(map[string]any{
 		"query": map[string]any{"type": "string", "description": "Search query for symbol name."},
@@ -253,6 +260,12 @@ func (r *ToolRegistry) registerAll() {
 		"limit":             map[string]any{"type": "integer", "description": "Maximum results."},
 		"include_generated": map[string]any{"type": "boolean", "description": "Also return machine-generated code (hidden by default)."},
 	}), append(requiredBase, "query"), r.handleSearchCodeGraph)
+
+	r.register("search_semantic", "CodeGraph semantic operation: semantic search ranks code entities by fusing BM25 keyword matching with bag-of-words vector similarity via reciprocal rank fusion. Surfaces semantically related identifiers (e.g. cleanup -> teardown) that keyword search misses.", baseProps(map[string]any{
+		"query":             map[string]any{"type": "string", "description": "Search query."},
+		"limit":             map[string]any{"type": "integer", "description": "Maximum results."},
+		"include_generated": map[string]any{"type": "boolean", "description": "Also return machine-generated code (hidden by default)."},
+	}), append(requiredBase, "query"), r.handleSearchSemantic)
 
 	r.register("get_hypotheses", "CodeGraph semantic operation: get hypotheses", baseProps(map[string]any{
 		"subject_id": map[string]any{"type": "string", "description": "Subject node ID."},
@@ -640,8 +653,9 @@ func (r *ToolRegistry) registerAll() {
 // Call fetches offset+limit+1 rows so it can report has_more without a total count.
 var paginatedTools = map[string]bool{
 	"find_symbol": true, "find_function": true, "find_class": true, "find_struct": true,
-	"find_string": true, "search_code_graph": true, "memory_search": true, "search_docs": true,
-	"find_vulnerabilities": true, "get_findings": true, "find_hot_paths": true,
+	"find_string": true, "search_code_graph": true, "search_semantic": true,
+	"memory_search": true, "search_docs": true, "find_vulnerabilities": true,
+	"get_findings": true, "find_hot_paths": true,
 	"find_dead_imports": true, "find_by_signature": true, "find_entry_points": true,
 	"find_related_tests": true, "get_tasks": true,
 }

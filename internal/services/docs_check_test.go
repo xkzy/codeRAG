@@ -42,7 +42,7 @@ func TestCheckDocsFindsDriftAndSuggestsRenames(t *testing.T) {
 		"docs/clean.md": "# Clean\nOnly mentions `Decoder` and `ParseFrame`.\n",
 	})
 	app := ApplicationInMemory()
-	if _, err := app.Index.IndexRepository("p", dir, true, nil); err != nil {
+	if _, err := app.Index.IndexRepository("p", dir, true, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, d := range []string{"docs/design.md", "docs/clean.md"} {
@@ -88,7 +88,7 @@ func TestCheckDocsDetectsCodeNewerThanDocAndMissingSource(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"code.go": "package x\nfunc Widget() {}\n", "README.md": "# R\nUses `Widget`.\n"})
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	doc := filepath.Join(dir, "README.md")
 	app.Documents.IndexMarkdown("p", doc)
 
@@ -114,7 +114,7 @@ func TestVerifyDesignReportsUnverifiedReferences(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"code.go": "package x\nfunc RealThing() {}\n", "d.md": "# D\n`RealThing` and `FakeThing`.\n"})
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	res, _ := app.Documents.IndexMarkdown("p", filepath.Join(dir, "d.md"))
 	rep, err := app.Documents.VerifyDesign("p", res["document_id"].(string))
 	if err != nil {
@@ -135,7 +135,7 @@ func TestProseNamesAreNotMissingButBackticksAre(t *testing.T) {
 		"d.md":    "# D\nWe support JavaScript and OpenCode users; `project_id` is a request field; call `find_function` first; `Vanished` is gone.\n",
 	})
 	app := ApplicationInMemory()
-	app.Index.IndexRepository("p", dir, true, nil)
+	app.Index.IndexRepository("p", dir, true, nil, false)
 	app.Documents.SetKnownNames([]string{"find_function"})
 	app.Documents.IndexMarkdown("p", filepath.Join(dir, "d.md"))
 	rep, _ := app.Documents.CheckDocs("p", 20)

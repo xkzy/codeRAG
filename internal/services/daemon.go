@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -13,12 +14,15 @@ type DaemonConfig struct {
 	IndexInterval         time.Duration
 	IndexOnChange         bool
 	MaxBackgroundJobs     int
+	MaxProjects           int
 	MaxWatchDirs          int
 	ProjectScanDepth      int
 	IdleTimeout           time.Duration
 	Roots                 []string
 	IndexIncremental      bool
 	IndexIgnore           []string
+	MaxDirtyFiles         int
+	SkipGraphify          bool
 }
 
 type Daemon struct {
@@ -43,6 +47,9 @@ func NewDaemon(app *Application, cfg DaemonConfig) *Daemon {
 	if cfg.IndexInterval == 0 {
 		cfg.IndexInterval = 5 * time.Minute
 	}
+	if cfg.MaxProjects <= 0 {
+		cfg.MaxProjects = 32
+	}
 	if cfg.MaxBackgroundJobs <= 0 {
 		cfg.MaxBackgroundJobs = 4
 	}
@@ -60,6 +67,9 @@ func NewDaemon(app *Application, cfg DaemonConfig) *Daemon {
 	}
 	if cfg.IndexIgnore == nil {
 		cfg.IndexIgnore = []string{}
+	}
+	if cfg.MaxDirtyFiles <= 0 {
+		cfg.MaxDirtyFiles = 10000
 	}
 	return &Daemon{
 		app:      app,
@@ -102,6 +112,7 @@ func (d *Daemon) Stop() {
 	for _, project := range d.projects {
 		projects = append(projects, project)
 	}
+	d.running = false
 	d.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -110,8 +121,8 @@ func (d *Daemon) Stop() {
 		project.Stop()
 	}
 	d.mu.Lock()
-	d.running = false
 	d.detector = nil
+	d.projects = map[string]*ProjectWorker{}
 	d.mu.Unlock()
 }
 
@@ -166,13 +177,17 @@ func (d *Daemon) detectLoop(ctx context.Context) {
 }
 
 func (d *Daemon) detectProjects(ctx context.Context) {
+	d.pruneProjects()
 	d.mu.RLock()
 	detector := d.detector
 	d.mu.RUnlock()
 	if detector == nil {
 		return
 	}
-	for _, project := range detector.Detect() {
+	found := detector.Detect()
+	active := make(map[string]bool, len(found))
+	for _, project := range found {
+		active[project.ID] = true
 		select {
 		case <-ctx.Done():
 			return
@@ -180,11 +195,43 @@ func (d *Daemon) detectProjects(ctx context.Context) {
 			d.registerProject(project)
 		}
 	}
+	detector.Prune(active)
+}
+
+func (d *Daemon) pruneProjects() {
+	d.mu.RLock()
+	projects := make([]*ProjectWorker, 0, len(d.projects))
+	for _, project := range d.projects {
+		projects = append(projects, project)
+	}
+	d.mu.RUnlock()
+	var stale []*ProjectWorker
+	for _, project := range projects {
+		if _, err := os.Stat(project.root); os.IsNotExist(err) {
+			stale = append(stale, project)
+		}
+	}
+	if len(stale) == 0 {
+		return
+	}
+	d.mu.Lock()
+	for _, project := range stale {
+		if d.projects[project.projectID] == project {
+			delete(d.projects, project.projectID)
+		}
+	}
+	d.mu.Unlock()
+	for _, project := range stale {
+		project.Stop()
+	}
 }
 
 func (d *Daemon) registerProject(project *ProjectIdentity) {
+	if info, err := os.Stat(project.Root); err != nil || !info.IsDir() {
+		return
+	}
 	d.mu.Lock()
-	if d.projects[project.ID] != nil {
+	if d.projects[project.ID] != nil || len(d.projects) >= d.cfg.MaxProjects {
 		d.mu.Unlock()
 		return
 	}
@@ -209,6 +256,7 @@ func (d *Daemon) maintenanceLoop(ctx context.Context) {
 }
 
 func (d *Daemon) maintenance() {
+	d.pruneProjects()
 	d.mu.RLock()
 	projects := make([]*ProjectWorker, 0, len(d.projects))
 	for _, project := range d.projects {
@@ -226,7 +274,7 @@ func (d *Daemon) AddProject(root string) {
 		return
 	}
 	d.registerProject(&ProjectIdentity{
-		ID:   stableProjectID(filepath.Clean(abs)),
+		ID:   StableProjectID(filepath.Clean(abs)),
 		Root: filepath.Clean(abs),
 		Name: filepath.Base(abs),
 	})
@@ -241,20 +289,26 @@ type ProjectWorker struct {
 	jobs      *atomic.Int64
 	observer  *Observer
 
-	stopMu    sync.Mutex
-	stopCh    chan struct{}
-	stopOnce  sync.Once
-	mu        sync.RWMutex
-	active    bool
-	lastSeen  time.Time
-	indexing  bool
-	pending   bool
-	lastError string
-	dirty     map[string]bool
-	timer     *time.Timer
+	stopMu        sync.Mutex
+	stopCh        chan struct{}
+	stopOnce      sync.Once
+	wg            sync.WaitGroup
+	stopped       bool
+	mu            sync.RWMutex
+	active        bool
+	lastSeen      time.Time
+	indexing      bool
+	pending       bool
+	dirtyOverflow bool
+	lastError     string
+	dirty         map[string]bool
+	timer         *time.Timer
 }
 
 func NewProjectWorker(app *Application, projectID, root string, cfg DaemonConfig, sem chan struct{}) *ProjectWorker {
+	if cfg.MaxDirtyFiles <= 0 {
+		cfg.MaxDirtyFiles = 10000
+	}
 	return &ProjectWorker{
 		app:       app,
 		projectID: projectID,
@@ -267,6 +321,12 @@ func NewProjectWorker(app *Application, projectID, root string, cfg DaemonConfig
 }
 
 func (p *ProjectWorker) Start() {
+	p.mu.RLock()
+	stopped := p.stopped
+	p.mu.RUnlock()
+	if stopped {
+		return
+	}
 	if p.app != nil && p.app.Events != nil {
 		p.app.Events.AddWorker(p)
 	}
@@ -286,33 +346,44 @@ func (p *ProjectWorker) Start() {
 
 func (p *ProjectWorker) Stop() {
 	p.stopOnce.Do(func() {
-		close(p.stopCh)
 		p.mu.Lock()
+		p.stopped = true
 		if p.timer != nil {
 			p.timer.Stop()
 			p.timer = nil
 		}
 		p.mu.Unlock()
+		close(p.stopCh)
 		if p.observer != nil {
 			p.observer.Stop()
 		}
 		if p.app != nil && p.app.Events != nil {
 			p.app.Events.RemoveWorker(p)
 		}
+		p.wg.Wait()
 	})
 }
 
 func (p *ProjectWorker) OnEvent(event Event) {
-	if event.ProjectID != "" && event.ProjectID != p.projectID {
+	p.mu.RLock()
+	stopped := p.stopped
+	p.mu.RUnlock()
+	if stopped || event.ProjectID != "" && event.ProjectID != p.projectID {
 		return
 	}
 	switch event.Kind {
 	case FileCreated, FileModified, FileDeleted, FileRenamed:
 		p.markActive()
 		if p.cfg.IndexOnChange {
-			// Track the changed file for incremental indexing
 			if file, ok := event.Payload["file"].(string); ok && file != "" {
 				p.mu.Lock()
+				if len(p.dirty) >= p.cfg.MaxDirtyFiles {
+					p.dirtyOverflow = true
+					p.dirty = make(map[string]bool)
+					p.mu.Unlock()
+					p.RunMaintenance()
+					return
+				}
 				p.dirty[file] = true
 				p.mu.Unlock()
 			}
@@ -323,14 +394,22 @@ func (p *ProjectWorker) OnEvent(event Event) {
 
 func (p *ProjectWorker) RunMaintenance() {
 	p.mu.Lock()
+	if p.stopped {
+		p.mu.Unlock()
+		return
+	}
 	if p.indexing || p.pending {
 		p.pending = true
 		p.mu.Unlock()
 		return
 	}
 	p.pending = true
+	p.wg.Add(1)
 	p.mu.Unlock()
-	go p.runMaintenance()
+	go func() {
+		defer p.wg.Done()
+		p.runMaintenance()
+	}()
 }
 
 func (p *ProjectWorker) runMaintenance() {
@@ -340,13 +419,16 @@ func (p *ProjectWorker) runMaintenance() {
 			p.mu.Unlock()
 			return
 		}
-		// Collect dirty files before clearing
+		fullIndex := p.dirtyOverflow
 		var dirtyFiles []string
-		if p.cfg.IndexIncremental && len(p.dirty) > 0 {
+		if fullIndex {
+			p.dirtyOverflow = false
+			p.dirty = make(map[string]bool)
+		} else if p.cfg.IndexIncremental && len(p.dirty) > 0 {
+			dirtyFiles = make([]string, 0, len(p.dirty))
 			for f := range p.dirty {
 				dirtyFiles = append(dirtyFiles, f)
 			}
-			// Clear dirty set
 			p.dirty = make(map[string]bool)
 		}
 		p.pending = false
@@ -361,28 +443,48 @@ func (p *ProjectWorker) runMaintenance() {
 			p.mu.Unlock()
 			return
 		}
+		if p.jobs != nil {
+			p.jobs.Add(1)
+		}
+		var err error
 		if p.app != nil && p.app.Index != nil {
-			var err error
-			if len(dirtyFiles) > 0 {
-				_, err = p.app.Index.IndexFiles(p.projectID, p.root, dirtyFiles, true, p.cfg.IndexIgnore)
+			if fullIndex || len(dirtyFiles) == 0 {
+				_, err = p.app.Index.IndexRepository(p.projectID, p.root, p.cfg.IndexIncremental, p.cfg.IndexIgnore, p.cfg.SkipGraphify)
 			} else {
-				_, err = p.app.Index.IndexRepository(p.projectID, p.root, p.cfg.IndexIncremental, p.cfg.IndexIgnore)
+				_, err = p.app.Index.IndexFiles(p.projectID, p.root, dirtyFiles, true, p.cfg.IndexIgnore)
+				if err != nil {
+					p.restoreDirty(dirtyFiles)
+				}
 			}
-			p.setError(err)
 		}
-		select {
-		case <-p.sem:
-		default:
+		if p.jobs != nil {
+			p.jobs.Add(-1)
 		}
+		p.setError(err)
+		p.saveGraph()
+		<-p.sem
 
 		p.mu.Lock()
 		p.indexing = false
-		again := p.pending
+		again := p.pending && !p.stopped
 		p.pending = false
 		p.mu.Unlock()
 		if !again {
 			return
 		}
+	}
+}
+
+func (p *ProjectWorker) saveGraph() {
+	if p.app == nil || p.app.Graph == nil {
+		return
+	}
+	saver, ok := p.app.Graph.(interface{ Save() error })
+	if !ok {
+		return
+	}
+	if err := saver.Save(); err != nil {
+		p.setError(err)
 	}
 }
 
@@ -404,7 +506,7 @@ func (p *ProjectWorker) markActive() {
 func (p *ProjectWorker) IsActive() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if !p.active {
+	if p.stopped || !p.active {
 		return false
 	}
 	return time.Since(p.lastSeen) < p.cfg.IdleTimeout

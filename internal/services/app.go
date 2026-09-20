@@ -1,6 +1,10 @@
 package services
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
+
 	"codergag/internal/cache"
 	"codergag/internal/config"
 	"codergag/internal/graph"
@@ -26,6 +30,14 @@ type Application struct {
 	Verify    *VerificationRunService
 	Privacy   *PrivacyService
 	Daemon    *Daemon
+}
+
+// IndexProgress returns the most recent index-progress snapshot for a project.
+func (a *Application) IndexProgress(projectID string) *IndexProgress {
+	if a.Index == nil {
+		return nil
+	}
+	return a.Index.Progress(projectID)
 }
 
 func NewApplication(g graph.GraphRepository) *Application {
@@ -71,7 +83,12 @@ func ApplicationFromConfig(cfg *config.Config) (*Application, error) {
 		if dbPath == "" {
 			dbPath = ".codergag.db"
 		}
-		repo, err := graph.NewPersistentRepository(dbPath)
+		if dbPath == "~" || strings.HasPrefix(dbPath, "~/") {
+			if home, err := os.UserHomeDir(); err == nil {
+				dbPath = filepath.Join(home, strings.TrimPrefix(dbPath, "~"))
+			}
+		}
+		repo, err := graph.NewPersistentRepositoryWithCache(dbPath, cfg.Graph.CacheNodes, cfg.Graph.CacheEdges)
 		if err != nil {
 			return nil, err
 		}
@@ -119,10 +136,12 @@ func daemonConfigFromConfig(cfg config.Config) DaemonConfig {
 		IndexOnChange:         cfg.Watch.IndexOnChange,
 		MaxBackgroundJobs:     cfg.Watch.MaxWorkers,
 		MaxWatchDirs:          cfg.Watch.MaxWatchDirs,
+		MaxDirtyFiles:         cfg.Watch.MaxDirtyFiles,
 		ProjectScanDepth:      cfg.Watch.ProjectScanDepth,
 		Roots:                 roots,
 		IndexIncremental:      cfg.Indexing.Incremental,
 		IndexIgnore:           cfg.Indexing.Ignore,
+		SkipGraphify:          cfg.Indexing.SkipGraphify,
 	}
 }
 
