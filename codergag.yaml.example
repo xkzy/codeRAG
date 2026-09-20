@@ -96,3 +96,8 @@ verification:
       - "check"
   timeout_seconds: 120
   max_output_bytes: 65536
+
+# Context store budgets (tokens injected into agent sessions via hooks)
+context:
+  session_budget: 1500   # tokens for SessionStart digest (pinned records, decisions, conventions)
+  prompt_budget: 500     # tokens for UserPromptSubmit digest (relevant-to-prompt records)
