@@ -65,7 +65,7 @@ func (d *ProjectDetector) scan(dir string, depth int, found *[]*ProjectIdentity)
 	if depth > d.depth || isIgnoreDir(filepath.Base(dir)) {
 		return
 	}
-	if isProjectRoot(dir) {
+	if !unsafeProjectRoot(dir) && isProjectRoot(dir) {
 		d.register(dir, found)
 		return
 	}
@@ -78,6 +78,9 @@ func (d *ProjectDetector) scan(dir string, depth int, found *[]*ProjectIdentity)
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() || isIgnoreDir(entry.Name()) || entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		if strings.HasPrefix(entry.Name(), ".") && unsafeProjectRoot(dir) {
 			continue
 		}
 		d.scan(filepath.Join(dir, entry.Name()), depth+1, found)
@@ -110,6 +113,16 @@ func (d *ProjectDetector) register(root string, found *[]*ProjectIdentity) {
 	}
 	if d.engine != nil {
 		d.engine.Emit(Event{Kind: ProjectDetected, ProjectID: id, Payload: map[string]any{"root": clean}})
+	}
+}
+
+func (d *ProjectDetector) Prune(active map[string]bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for id := range d.projects {
+		if !active[id] {
+			delete(d.projects, id)
+		}
 	}
 }
 
@@ -174,6 +187,23 @@ func gitRootPath(root string) (string, error) {
 
 func gitRootCommit(root string) (string, error) {
 	return git(root, "rev-parse", "HEAD")
+}
+
+// unsafeProjectRoot reports directories that must never be indexed as a single
+// project: the filesystem root and the user's home directory. Their children
+// are still scanned for real projects.
+func unsafeProjectRoot(dir string) bool {
+	clean := filepath.Clean(dir)
+	if clean == string(filepath.Separator) || clean == filepath.VolumeName(clean)+string(filepath.Separator) {
+		return true
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if resolved, err := filepath.EvalSymlinks(home); err == nil {
+			home = resolved
+		}
+		return clean == filepath.Clean(home)
+	}
+	return false
 }
 
 func isProjectRoot(dir string) bool {

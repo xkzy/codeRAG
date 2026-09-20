@@ -1,10 +1,12 @@
 package services
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"codergag/internal/graph"
 )
@@ -64,6 +66,37 @@ func TestGeneratedCodeIsFlaggedHiddenFromSearchButStillLinked(t *testing.T) {
 	}
 }
 
+func TestCommitCacheIsBounded(t *testing.T) {
+	commitMu.Lock()
+	original := commitCache
+	commitCache = map[string]struct {
+		sha string
+		at  time.Time
+	}{}
+	commitMu.Unlock()
+	t.Cleanup(func() {
+		commitMu.Lock()
+		commitCache = original
+		commitMu.Unlock()
+	})
+	now := time.Now()
+	for i := 0; i < maxCommitCacheEntries+16; i++ {
+		commitMu.Lock()
+		commitCache[fmt.Sprintf("/repo-%d", i)] = struct {
+			sha string
+			at  time.Time
+		}{at: now.Add(-time.Duration(i) * time.Second)}
+		commitMu.Unlock()
+	}
+	commitMu.Lock()
+	pruneCommitCache(now)
+	got := len(commitCache)
+	commitMu.Unlock()
+	if got > maxCommitCacheEntries {
+		t.Fatalf("commitCache = %d, want at most %d", got, maxCommitCacheEntries)
+	}
+}
+
 func TestOversizedFilesAreSkipped(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{"big.js": "function a(){}\n" + strings.Repeat("//x\n", maxIndexFileBytes/4)})
@@ -73,6 +106,29 @@ func TestOversizedFilesAreSkipped(t *testing.T) {
 	}
 	if fns, _ := app.Graph.FindNodes("Function", map[string]any{"project_id": "p"}); len(fns) != 0 {
 		t.Fatalf("oversized file should not be indexed, found %d functions", len(fns))
+	}
+}
+
+func TestIncrementalIndexReusesGraphifyRun(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"go.mod": "module x\n",
+		"a.go":   "package x\nfunc A() {}\n",
+	})
+	app := ApplicationInMemory()
+	if _, err := app.Index.IndexRepository("p", dir, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, dir, map[string]string{"a.go": "package x\nfunc A() {}\nfunc B() {}\n"})
+	if _, err := app.Index.IndexRepository("p", dir, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := app.Graph.FindNodes("GraphifyRun", map[string]any{"project_id": "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("GraphifyRun nodes = %d, want 1", len(runs))
 	}
 }
 

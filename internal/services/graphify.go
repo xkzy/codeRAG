@@ -28,6 +28,17 @@ type GraphifyProgress struct {
 
 var globalProgress = &GraphifyProgress{}
 
+// Hard limits keep a single Graphify pass bounded no matter how large or
+// pathological the tree is (huge/binary files, files with thousands of
+// concepts, or a mis-rooted project).
+const (
+	graphifyMaxFiles           = 20000
+	graphifyMaxFileBytes       = 1 << 20
+	graphifyMaxConceptsPerFile = 64
+	graphifyMaxNodes           = 200000
+	graphifyMaxEdges           = 400000
+)
+
 func (p *GraphifyProgress) Update(fn func()) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -153,6 +164,12 @@ func (g *Graphify) extract() (*Graph, error) {
 			}
 			return nil
 		}
+		if !info.Mode().IsRegular() || info.Size() > graphifyMaxFileBytes {
+			return nil
+		}
+		if globalProgress.Snapshot().FilesSeen >= graphifyMaxFiles || len(graph.Nodes) >= graphifyMaxNodes || len(graph.Edges) >= graphifyMaxEdges {
+			return filepath.SkipAll
+		}
 		rel, _ := filepath.Rel(g.root, p)
 		globalProgress.Update(func() {
 			globalProgress.FilesSeen++
@@ -160,6 +177,9 @@ func (g *Graphify) extract() (*Graph, error) {
 		})
 		addNode(Node{ID: "file:" + rel, Label: rel, Kind: "file", File: rel})
 		concepts := extractConcepts(p)
+		if len(concepts) > graphifyMaxConceptsPerFile {
+			concepts = concepts[:graphifyMaxConceptsPerFile]
+		}
 		for _, c := range concepts {
 			c.File = rel
 			addNode(c)

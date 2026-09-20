@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -47,6 +49,7 @@ func main() {
 		cfg = loaded
 	}
 	cfg = configForCommand(cmd, cfg)
+	applyMemoryLimit()
 	app, err := services.ApplicationFromConfig(&cfg)
 	if err != nil {
 		fail("init:", err)
@@ -151,5 +154,22 @@ func runHTTP(app *services.Application, args []string) {
 	fmt.Fprintf(os.Stderr, "agent view at http://%s\n", addr)
 	if err := srv.ListenAndServe(); err != nil {
 		fail("http:", err)
+	}
+}
+
+// applyMemoryLimit sets a soft Go heap limit so the GC works harder before the
+// process grows without bound. CODERAG_MEMORY_LIMIT_MB overrides the 1 GiB
+// default; 0 disables the limit.
+func applyMemoryLimit() {
+	mb := 1024
+	if v := os.Getenv("CODERAG_MEMORY_LIMIT_MB"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			fail("CODERAG_MEMORY_LIMIT_MB:", fmt.Errorf("invalid value %q", v))
+		}
+		mb = n
+	}
+	if mb > 0 {
+		debug.SetMemoryLimit(int64(mb) << 20)
 	}
 }

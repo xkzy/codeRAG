@@ -4,10 +4,34 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"codergag/internal/graph"
+	"codergag/internal/models"
 )
+
+type countingMemoryGraph struct {
+	graph.GraphRepository
+	upserts atomic.Int64
+}
+
+func (g *countingMemoryGraph) UpsertNode(kind string, identity, properties map[string]any) (*models.Node, error) {
+	g.upserts.Add(1)
+	return g.GraphRepository.UpsertNode(kind, identity, properties)
+}
+
+func TestMemoryStoreWritesNodeOnce(t *testing.T) {
+	base := graph.NewMemoryGraphRepository()
+	spy := &countingMemoryGraph{GraphRepository: base}
+	service := NewMemoryService(spy)
+	if _, err := service.Store("p", "title", "content", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := spy.upserts.Load(); got != 1 {
+		t.Fatalf("UpsertNode calls = %d, want 1", got)
+	}
+}
 
 func setupMemory(t *testing.T) (*Application, map[string]any) {
 	t.Helper()

@@ -3,6 +3,7 @@ package graph
 import (
 	"bytes"
 	"encoding/gob"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -206,5 +207,86 @@ func TestMigratesToRelativeStableIDs(t *testing.T) {
 	}
 	if p := get("b1"); p["stable_id"] != "binfunc:fw:0x10" {
 		t.Fatalf("binary function: %v", p)
+	}
+}
+
+func TestPersistentRepositoryLoadsDiskStateLazilyAndBoundsCache(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bounded.gob")
+	nodes := map[string]gobNode{}
+	for i := 0; i < 12; i++ {
+		id := fmt.Sprintf("n%d", i)
+		nodes[id] = gobNode{Kind: "Memory", Properties: map[string]any{"id": id, "n": i}}
+	}
+	edges := map[string]gobEdge{}
+	for i := 0; i < 12; i++ {
+		id := fmt.Sprintf("e%d", i)
+		edges[id] = gobEdge{ID: id, Kind: "LINK", FromID: fmt.Sprintf("n%d", i), ToID: fmt.Sprintf("n%d", (i+1)%12)}
+	}
+	writeState(t, path, repoState{SchemaVersion: SchemaVersion, Nodes: nodes, Edges: edges})
+
+	repo, err := NewPersistentRepositoryWithCacheSize(path, 3, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo.CacheNodes() != 0 || repo.CacheEdges() != 0 {
+		t.Fatalf("constructor loaded graph into cache: nodes=%d edges=%d", repo.CacheNodes(), repo.CacheEdges())
+	}
+	all, err := repo.FindNodes("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 12 {
+		t.Fatalf("FindNodes returned %d nodes, want 12", len(all))
+	}
+	if repo.CacheNodes() > 3 || repo.CacheEdges() > 2 {
+		t.Fatalf("cache exceeded limits: nodes=%d edges=%d", repo.CacheNodes(), repo.CacheEdges())
+	}
+}
+
+func TestBoundedCachePersistsJournaledWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "journaled.gob")
+	repo, err := NewPersistentRepositoryWithCacheSize(path, 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ids []string
+	for i := 0; i < 3; i++ {
+		n, err := repo.UpsertNode("Memory", map[string]any{"project_id": "p", "title": fmt.Sprintf("n%d", i)}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, n.ID)
+		if i > 0 {
+			if _, err := repo.Link("LINK", ids[i-1], n.ID, nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if repo.CacheNodes() > 2 || repo.CacheEdges() > 1 {
+		t.Fatalf("cache exceeded limits before save: nodes=%d edges=%d", repo.CacheNodes(), repo.CacheEdges())
+	}
+	if err := repo.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	again, err := NewPersistentRepositoryWithCacheSize(path, 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Close()
+	nodes, err := again.FindNodes("Memory", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 3 {
+		t.Fatalf("disk round trip returned %d nodes, want 3", len(nodes))
+	}
+	neighbors, err := again.Neighbors(ids[0], "LINK", DirOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(neighbors) != 1 {
+		t.Fatalf("disk round trip returned %d neighbors, want 1", len(neighbors))
 	}
 }

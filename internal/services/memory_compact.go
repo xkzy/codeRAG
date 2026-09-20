@@ -43,12 +43,12 @@ func isArchived(n *models.Node) bool {
 
 // linkEntities connects a memory to the code entities (functions, classes,
 // structs) it mentions, so its knowledge is reachable through graph traversal.
-func (s *MemoryService) linkEntities(projectID string, mem *models.Node, text string) ([]string, []string, error) {
+func (s *MemoryService) entityIndex(projectID string) (map[string][]*models.Node, error) {
 	index := map[string][]*models.Node{}
 	for _, kind := range []string{"Function", "Class", "Struct"} {
 		nodes, err := s.graph.FindNodes(kind, map[string]any{"project_id": projectID})
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		for _, n := range nodes {
 			if name, _ := n.Properties["name"].(string); len(name) >= minEntityNameLen {
@@ -56,12 +56,27 @@ func (s *MemoryService) linkEntities(projectID string, mem *models.Node, text st
 			}
 		}
 	}
-	linked := map[string]bool{}
-	if nbrs, err := s.graph.Neighbors(mem.ID, "MENTIONS", graph.DirOut); err == nil {
-		for _, en := range nbrs {
-			linked[en.Node.ID] = true
-		}
+	return index, nil
+}
+
+func (s *MemoryService) findEntities(projectID, text string) ([]string, []string, error) {
+	index, err := s.entityIndex(projectID)
+	if err != nil {
+		return nil, nil, err
 	}
+	return entitiesFromIndex(text, index)
+}
+
+func (s *MemoryService) linkEntities(projectID string, mem *models.Node, text string) ([]string, []string, error) {
+	index, err := s.entityIndex(projectID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.linkEntitiesFromIndex(mem.ID, text, index)
+}
+
+func entitiesFromIndex(text string, index map[string][]*models.Node) ([]string, []string, error) {
+	linked := map[string]bool{}
 	seenName := map[string]bool{}
 	var ids, names []string
 	for _, tok := range identRe.FindAllString(text, -1) {
@@ -76,14 +91,41 @@ func (s *MemoryService) linkEntities(projectID string, mem *models.Node, text st
 		for _, t := range targets {
 			ids = append(ids, t.ID)
 			names = append(names, tok)
+			linked[t.ID] = true
+		}
+	}
+	return ids, names, nil
+}
+
+func (s *MemoryService) linkEntitiesFromIndex(memID, text string, index map[string][]*models.Node) ([]string, []string, error) {
+	linked := map[string]bool{}
+	if nbrs, err := s.graph.Neighbors(memID, "MENTIONS", graph.DirOut); err == nil {
+		for _, en := range nbrs {
+			linked[en.Node.ID] = true
+		}
+	}
+	seenName := map[string]bool{}
+	var linkedIDs, linkedNames []string
+	for _, tok := range identRe.FindAllString(text, -1) {
+		if seenName[tok] {
+			continue
+		}
+		seenName[tok] = true
+		targets := index[tok]
+		if len(targets) > maxLinksPerName {
+			targets = targets[:maxLinksPerName]
+		}
+		for _, t := range targets {
+			linkedIDs = append(linkedIDs, t.ID)
+			linkedNames = append(linkedNames, tok)
 			if !linked[t.ID] {
-				if _, err := s.graph.Link("MENTIONS", mem.ID, t.ID, map[string]any{"source": "auto"}); err == nil {
+				if _, err := s.graph.Link("MENTIONS", memID, t.ID, map[string]any{"source": "auto"}); err == nil {
 					linked[t.ID] = true
 				}
 			}
 		}
 	}
-	return ids, names, nil
+	return linkedIDs, linkedNames, nil
 }
 
 func normalizeLine(l string) string {

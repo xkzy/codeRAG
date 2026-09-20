@@ -8,11 +8,18 @@ User=codergag
 WorkingDirectory=/opt/codergag
 Environment=CODERAG_CONFIG=/etc/codergag/config.yaml
 Environment=CODERAG_MAINTENANCE_INTERVAL=15m
+Environment=CODERAG_MEMORY_LIMIT_MB=768
 ExecStart=/opt/codergag/codergag serve
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
+
+# Resource limits (defence in depth; the process also self-limits its heap)
+MemoryHigh=1G
+MemoryMax=1536M
+TasksMax=512
+CPUQuota=200%
 
 # Security hardening
 NoNewPrivileges=true

@@ -57,6 +57,7 @@ type WatchConfig struct {
 	MaxWorkers       int      `yaml:"max_workers" xml:"max_workers"`
 	QueueSize        int      `yaml:"queue_size" xml:"queue_size"`
 	MaxWatchDirs     int      `yaml:"max_watch_dirs" xml:"max_watch_dirs"`
+	MaxDirtyFiles    int      `yaml:"max_dirty_files" xml:"max_dirty_files"`
 	ProjectScanDepth int      `yaml:"project_scan_depth" xml:"project_scan_depth"`
 	ProjectRoots     []string `yaml:"project_roots" xml:"project_roots"`
 }
@@ -117,6 +118,7 @@ func Default() Config {
 			MaxWorkers:       4,
 			QueueSize:        1024,
 			MaxWatchDirs:     256,
+			MaxDirtyFiles:    10000,
 			ProjectScanDepth: 3,
 			ProjectRoots:     []string{"."},
 		},
@@ -187,6 +189,9 @@ func Load(path string) (Config, error) {
 	if cfg.Watch.MaxWatchDirs <= 0 {
 		cfg.Watch.MaxWatchDirs = 256
 	}
+	if cfg.Watch.MaxDirtyFiles <= 0 {
+		cfg.Watch.MaxDirtyFiles = 10000
+	}
 	if cfg.Watch.ProjectScanDepth <= 0 {
 		cfg.Watch.ProjectScanDepth = 3
 	}
@@ -201,6 +206,12 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.Cache.Semantic.MaxResults == 0 {
 		cfg.Cache.Semantic.MaxResults = 5
+	}
+	if cfg.Cache.Semantic.MaxEntries <= 0 {
+		cfg.Cache.Semantic.MaxEntries = 10000
+	}
+	if cfg.Cache.Exact.MaxEntries <= 0 {
+		cfg.Cache.Exact.MaxEntries = 10000
 	}
 	if cfg.Cache.TTL.Seconds == 0 {
 		cfg.Cache.TTL.Seconds = 86400

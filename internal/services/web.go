@@ -232,7 +232,7 @@ func (s *HTTPServer) handleGraphifyProgress(w http.ResponseWriter, r *http.Reque
 			return
 		case <-ticker.C:
 			p := globalProgress.Snapshot()
-			if p.StartedAt.IsZero() {
+			if p.StartedAt.IsZero() || p.Done {
 				// This process has not indexed anything; report the last stored run.
 				if run := s.latestGraphifyRun(""); run != nil {
 					p.Phase, p.Done = "last run", true

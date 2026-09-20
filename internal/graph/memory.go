@@ -221,4 +221,16 @@ func (r *MemoryGraphRepository) QueryReadonly(query string, params map[string]an
 	return nil, errors.New("advanced queries are not enabled by this repository")
 }
 
+func (r *MemoryGraphRepository) NodeCount() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.nodes)
+}
+
+func (r *MemoryGraphRepository) EdgeCount() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.edges)
+}
+
 func (r *MemoryGraphRepository) Close() error { return nil }

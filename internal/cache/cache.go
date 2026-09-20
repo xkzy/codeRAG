@@ -41,13 +41,15 @@ type CacheConfig struct {
 }
 
 type LevelConfig struct {
-	Enabled bool `yaml:"enabled" xml:"enabled"`
+	Enabled    bool `yaml:"enabled" xml:"enabled"`
+	MaxEntries int  `yaml:"max_entries" xml:"max_entries"`
 }
 
 type SemanticConfig struct {
 	Enabled    bool    `yaml:"enabled" xml:"enabled"`
 	Threshold  float64 `yaml:"threshold" xml:"threshold"`
 	MaxResults int     `yaml:"max_results" xml:"max_results"`
+	MaxEntries int     `yaml:"max_entries" xml:"max_entries"`
 }
 
 type LLMCacheConfig struct {
@@ -81,11 +83,12 @@ type PrivacyConfig struct {
 func DefaultConfig() CacheConfig {
 	return CacheConfig{
 		Enabled: true,
-		Exact:   LevelConfig{Enabled: true},
+		Exact:   LevelConfig{Enabled: true, MaxEntries: 10000},
 		Semantic: SemanticConfig{
 			Enabled:    true,
 			Threshold:  0.92,
 			MaxResults: 5,
+			MaxEntries: 10000,
 		},
 		Tool:     LevelConfig{Enabled: true},
 		Analysis: LevelConfig{Enabled: true},
@@ -218,6 +221,7 @@ type CacheManager struct {
 	config        CacheConfig
 	mu            sync.RWMutex
 	stats         CacheStats
+	exactCount    int
 	jobs          map[string]*Job
 	semanticCache *SemanticCache
 }
@@ -239,6 +243,16 @@ func NewCacheManager(g graph.GraphRepository, cfg CacheConfig) *CacheManager {
 	}
 	if cfg.Semantic.Enabled {
 		cm.semanticCache = NewSemanticCache(cfg.Semantic)
+	}
+	if cfg.Exact.Enabled {
+		entries, err := g.FindNodes("CacheEntry", nil)
+		if err == nil {
+			for _, entry := range entries {
+				if !isSpecialCacheEntry(entry) {
+					cm.exactCount++
+				}
+			}
+		}
 	}
 	return cm
 }
@@ -308,6 +322,12 @@ func (c *CacheManager) CheckExactCache(projectID, repoID, commit, binaryHash, to
 	if c.isFresh(entry) {
 		return entry, nil
 	}
+	if err := c.graph.RemoveNodes([]string{entries[0].ID}); err != nil {
+		return nil, err
+	}
+	if !isSpecialCacheEntry(entries[0]) {
+		c.forgetExact(1)
+	}
 	c.IncrementStat("stale_hits")
 	return &CacheEntry{Freshness: FreshnessStale}, nil
 }
@@ -328,7 +348,15 @@ func (c *CacheManager) StoreExactCache(projectID, repoID, commit, binaryHash, to
 		AnalysisVersion: AnalysisVersion,
 	})
 	now := NowISO()
-	_, err := c.graph.UpsertNode("CacheEntry", map[string]any{
+	existing, err := c.graph.FindNodes("CacheEntry", map[string]any{
+		"project_id": projectID,
+		"cache_key":  cacheKey,
+		"tool_name":  toolName,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = c.graph.UpsertNode("CacheEntry", map[string]any{
 		"project_id": projectID,
 		"cache_key":  cacheKey,
 		"tool_name":  toolName,
@@ -347,7 +375,80 @@ func (c *CacheManager) StoreExactCache(projectID, repoID, commit, binaryHash, to
 		"agent":            agent,
 		"freshness":        FreshnessValid,
 	})
+	if err != nil {
+		return err
+	}
+	if len(existing) == 0 {
+		c.mu.Lock()
+		c.exactCount++
+		count := c.exactCount
+		c.mu.Unlock()
+		if maxEntries := c.config.Exact.MaxEntries; maxEntries > 0 && count > maxEntries {
+			_, err = c.PurgeExact(maxEntries)
+		}
+	}
 	return err
+}
+
+func (c *CacheManager) ExactLimit() int {
+	return c.config.Exact.MaxEntries
+}
+
+func (c *CacheManager) PurgeExact(maxEntries int) (int, error) {
+	if maxEntries <= 0 {
+		return 0, nil
+	}
+	entries, err := c.graph.FindNodes("CacheEntry", nil)
+	if err != nil {
+		return 0, err
+	}
+	byProject := map[string][]*models.Node{}
+	for _, entry := range entries {
+		if isSpecialCacheEntry(entry) {
+			continue
+		}
+		projectID := getString(entry.Properties, "project_id")
+		byProject[projectID] = append(byProject[projectID], entry)
+	}
+	var remove []string
+	remaining := 0
+	for projectID, projectEntries := range byProject {
+		sort.Slice(projectEntries, func(i, j int) bool {
+			if getString(projectEntries[i].Properties, "updated_at") == getString(projectEntries[j].Properties, "updated_at") {
+				return projectEntries[i].ID < projectEntries[j].ID
+			}
+			return getString(projectEntries[i].Properties, "updated_at") > getString(projectEntries[j].Properties, "updated_at")
+		})
+		if len(projectEntries) > maxEntries {
+			for _, entry := range projectEntries[maxEntries:] {
+				remove = append(remove, entry.ID)
+			}
+			remaining += maxEntries
+		} else {
+			remaining += len(projectEntries)
+		}
+		byProject[projectID] = projectEntries
+	}
+	if len(remove) > 0 {
+		if err := c.graph.RemoveNodes(remove); err != nil {
+			return 0, err
+		}
+	}
+	c.mu.Lock()
+	c.exactCount = remaining
+	c.stats.Invalidations += len(remove)
+	c.mu.Unlock()
+	return len(remove), nil
+}
+
+func (c *CacheManager) forgetExact(count int) {
+	c.mu.Lock()
+	if c.exactCount <= count {
+		c.exactCount = 0
+	} else {
+		c.exactCount -= count
+	}
+	c.mu.Unlock()
 }
 
 func (c *CacheManager) Invalidate(args InvalidateArgs) error {
@@ -383,6 +484,7 @@ func (c *CacheManager) Invalidate(args InvalidateArgs) error {
 		c.mu.Lock()
 		c.stats.Invalidations += len(ids)
 		c.mu.Unlock()
+		c.forgetExact(len(ids))
 	}
 	return nil
 }
@@ -406,6 +508,7 @@ func (c *CacheManager) InvalidateByCommit(projectID, commit string) error {
 		c.mu.Lock()
 		c.stats.Invalidations += len(ids)
 		c.mu.Unlock()
+		c.forgetExact(len(ids))
 	}
 	return nil
 }
@@ -429,6 +532,7 @@ func (c *CacheManager) InvalidateByBinaryHash(projectID, binaryHash string) erro
 		c.mu.Lock()
 		c.stats.Invalidations += len(ids)
 		c.mu.Unlock()
+		c.forgetExact(len(ids))
 	}
 	return nil
 }
@@ -482,6 +586,15 @@ func unmarshalCacheEntry(node *models.Node) *CacheEntry {
 	return entry
 }
 
+func isSpecialCacheEntry(node *models.Node) bool {
+	switch getString(node.Properties, "tool_name") {
+	case PrivacyStateKey, PrivacyPolicyKey, PseudonymSnapshotKey:
+		return true
+	default:
+		return false
+	}
+}
+
 func getString(props map[string]any, key string) string {
 	if v, ok := props[key]; ok {
 		if s, ok := v.(string); ok {
@@ -508,6 +621,7 @@ func (c *CacheManager) Flush(projectID string) (int, error) {
 		c.mu.Lock()
 		c.stats.Invalidations += len(ids)
 		c.mu.Unlock()
+		c.forgetExact(len(ids))
 	}
 	return len(ids), nil
 }

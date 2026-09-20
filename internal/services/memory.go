@@ -28,6 +28,14 @@ func (s *MemoryService) Store(projectID, title, content string, opts map[string]
 	if o, ok := opts["source"].(string); ok {
 		source = o
 	}
+	index, err := s.entityIndex(projectID)
+	if err != nil {
+		return nil, err
+	}
+	ids, names, err := entitiesFromIndex(title+"\n"+content, index)
+	if err != nil {
+		return nil, err
+	}
 	node, err := s.graph.UpsertNode("Memory", map[string]any{
 		"project_id": projectID,
 		"title":      title,
@@ -37,18 +45,13 @@ func (s *MemoryService) Store(projectID, title, content string, opts map[string]
 		"agent_source": agent,
 		"source":       source,
 		"archived":     false,
+		"entity_ids":   toAny(ids),
+		"entities":     toAny(names),
 	})
 	if err != nil {
 		return nil, err
 	}
-	ids, names, err := s.linkEntities(projectID, node, title+"\n"+content)
-	if err != nil {
-		return nil, err
-	}
-	node.SetProperty("entity_ids", toAny(ids))
-	node.SetProperty("entities", toAny(names))
-	if _, err := s.graph.UpsertNode("Memory", map[string]any{"project_id": projectID, "title": title},
-		map[string]any{"entity_ids": toAny(ids), "entities": toAny(names)}); err != nil {
+	if _, _, err := s.linkEntitiesFromIndex(node.ID, title+"\n"+content, index); err != nil {
 		return nil, err
 	}
 	res := Present(node)

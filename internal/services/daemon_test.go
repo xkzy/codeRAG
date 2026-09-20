@@ -1,11 +1,15 @@
 package services
 
 import (
-	"github.com/fsnotify/fsnotify"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"codergag/internal/graph"
+	"github.com/fsnotify/fsnotify"
 )
 
 func TestDaemonStatusAndLifecycle(t *testing.T) {
@@ -44,6 +48,21 @@ func TestObserverOverflowEmitsOldest(t *testing.T) {
 	}
 }
 
+func TestEventEngineRingDropsOldest(t *testing.T) {
+	engine := NewEventEngine(3, 1)
+	defer engine.Stop()
+	for i := 1; i <= 5; i++ {
+		engine.Emit(Event{ID: fmt.Sprintf("event-%d", i)})
+	}
+	snapshot := engine.Snapshot()
+	if len(snapshot) != 3 || snapshot[0].ID != "event-3" || snapshot[2].ID != "event-5" {
+		t.Fatalf("unexpected bounded history: %v", snapshot)
+	}
+	if dropped := engine.Metrics()["events_dropped"]; dropped < 2 {
+		t.Fatalf("events_dropped = %d, want at least 2", dropped)
+	}
+}
+
 func fsnotifyEvent(name string) fsnotify.Event {
 	return fsnotify.Event{Name: name, Op: fsnotify.Write}
 }
@@ -69,9 +88,71 @@ func TestIndexFilesReportsFailuresAndResolves(t *testing.T) {
 	}
 }
 
+func TestProjectWorkerDirtySetOverflowsToFullIndex(t *testing.T) {
+	app := ApplicationInMemory()
+	worker := NewProjectWorker(app, "p", t.TempDir(), DaemonConfig{
+		IndexOnChange:    true,
+		IndexIncremental: true,
+		MaxDirtyFiles:    2,
+	}, make(chan struct{}, 1))
+	worker.mu.Lock()
+	worker.indexing = true
+	worker.mu.Unlock()
+	for i := 0; i < 3; i++ {
+		worker.OnEvent(Event{
+			Kind:      FileModified,
+			ProjectID: "p",
+			Payload:   map[string]any{"file": filepath.Join(worker.root, fmt.Sprintf("f%d.go", i))},
+		})
+	}
+	worker.mu.RLock()
+	overflow := worker.dirtyOverflow
+	dirty := len(worker.dirty)
+	worker.mu.RUnlock()
+	if !overflow || dirty > 2 {
+		t.Fatalf("overflow=%v dirty=%d, want overflow with at most 2 dirty files", overflow, dirty)
+	}
+	worker.mu.Lock()
+	worker.indexing = false
+	worker.pending = false
+	worker.mu.Unlock()
+}
+
 type countWorker struct{ n int }
 
 func (c *countWorker) OnEvent(Event) { c.n++ }
+
+type savingGraph struct {
+	graph.GraphRepository
+	saves atomic.Int64
+}
+
+func (g *savingGraph) Save() error {
+	g.saves.Add(1)
+	return nil
+}
+
+func TestProjectWorkerSavesGraphAfterIndexing(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package x\nfunc A() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := &savingGraph{GraphRepository: graph.NewMemoryGraphRepository()}
+	app := NewApplication(store)
+	worker := NewProjectWorker(app, "p", root, DaemonConfig{IndexIncremental: true}, make(chan struct{}, 1))
+	worker.RunMaintenance()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && store.saves.Load() == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	worker.Stop()
+	if store.saves.Load() == 0 {
+		t.Fatal("graph was not saved after indexing")
+	}
+}
 
 func TestEventEngineDrainsOnStop(t *testing.T) {
 	e := NewEventEngine(8)

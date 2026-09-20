@@ -1,6 +1,10 @@
 package services
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
+
 	"codergag/internal/cache"
 	"codergag/internal/config"
 	"codergag/internal/graph"
@@ -71,6 +75,11 @@ func ApplicationFromConfig(cfg *config.Config) (*Application, error) {
 		if dbPath == "" {
 			dbPath = ".codergag.db"
 		}
+		if dbPath == "~" || strings.HasPrefix(dbPath, "~/") {
+			if home, err := os.UserHomeDir(); err == nil {
+				dbPath = filepath.Join(home, strings.TrimPrefix(dbPath, "~"))
+			}
+		}
 		repo, err := graph.NewPersistentRepository(dbPath)
 		if err != nil {
 			return nil, err
@@ -119,6 +128,7 @@ func daemonConfigFromConfig(cfg config.Config) DaemonConfig {
 		IndexOnChange:         cfg.Watch.IndexOnChange,
 		MaxBackgroundJobs:     cfg.Watch.MaxWorkers,
 		MaxWatchDirs:          cfg.Watch.MaxWatchDirs,
+		MaxDirtyFiles:         cfg.Watch.MaxDirtyFiles,
 		ProjectScanDepth:      cfg.Watch.ProjectScanDepth,
 		Roots:                 roots,
 		IndexIncremental:      cfg.Indexing.Incremental,
