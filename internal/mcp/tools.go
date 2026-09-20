@@ -74,8 +74,8 @@ func (r *ToolRegistry) registerAll() {
 	}), append(requiredBase, "path"), r.handleIndexFile)
 
 	r.register("index_files", "CodeGraph semantic operation: index files - indexes a specific set of files incrementally, removing files that no longer exist on disk. Returns per-file errors instead of silently discarding them.", baseProps(map[string]any{
-		"root":   map[string]any{"type": "string", "description": "Repository root path."},
-		"files":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File paths to index."},
+		"root":  map[string]any{"type": "string", "description": "Repository root path."},
+		"files": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File paths to index."},
 	}), append(requiredBase, "root", "files"), r.handleIndexFiles)
 
 	r.register("find_symbol", "CodeGraph semantic operation: find symbol", baseProps(map[string]any{
@@ -590,6 +590,7 @@ func (r *ToolRegistry) registerAll() {
 		"limit":      map[string]any{"type": "integer", "description": "Max items per section (default 10)."},
 		"max_tokens": map[string]any{"type": "integer", "description": "Token budget; response is trimmed to fit."},
 		"level":      map[string]any{"type": "integer", "description": "Context level 0-5 (default 1)."},
+		"profile":    map[string]any{"type": "string", "enum": []string{"small"}, "description": "Use aggressive shaping for small models; caps context at about 1200 tokens."},
 	}), append(requiredBase, "question"), r.handlePrepareContext)
 
 	r.register("explain_context", "ContextCompiler: same as prepare_context at level=5 with a full provenance explanation of how each fact was sourced. Use when you need to audit or debug the context assembly.", baseProps(map[string]any{

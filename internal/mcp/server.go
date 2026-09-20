@@ -66,7 +66,7 @@ func NewServer(
 	opts ...ServerOption,
 ) *Server {
 	s := &Server{
-		version:  "0.1.0",
+		version:  "1.3.0",
 		registry: registry,
 		reader:   bufio.NewReader(os.Stdin),
 		writer:   os.Stdout,

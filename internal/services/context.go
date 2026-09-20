@@ -71,9 +71,10 @@ type ContextRequest struct {
 	TaskID    string // optional: pull task facts and plan
 	TeamID    string // optional: pull team knowledge
 	Scopes    []string
-	Limit     int // max items per section (default 10)
-	MaxTokens int // 0 = no budget cap
-	Level     int // 0-5, default 1
+	Limit     int    // max items per section (default 10)
+	MaxTokens int    // 0 = no budget cap
+	Level     int    // 0-5, default 1
+	Profile   string // "small" enables aggressive, small-model-safe shaping
 	Explain   bool
 	Privacy   *PrivacyContext // optional: apply privacy firewall to outbound text
 }
@@ -103,6 +104,17 @@ func (c *ContextCompiler) Compile(req ContextRequest) (*CompiledContext, error) 
 	}
 	if req.Level < CtxLevelRaw || req.Level > CtxLevelProvenance {
 		req.Level = CtxLevelStructured
+	}
+	if req.Profile == "small" {
+		if req.Limit > 6 {
+			req.Limit = 6
+		}
+		if req.Level < CtxLevelCompressed {
+			req.Level = CtxLevelCompressed
+		}
+		if req.MaxTokens <= 0 {
+			req.MaxTokens = 1200
+		}
 	}
 
 	var blocks []ContextBlock
@@ -151,6 +163,13 @@ func (c *ContextCompiler) Compile(req ContextRequest) (*CompiledContext, error) 
 		}
 	}
 
+	// Compact before ranking and budgeting. Reverse-engineering output and log
+	// evidence commonly repeats the same line in several sources; carrying those
+	// copies into the prompt wastes budget without adding evidence.
+	if req.Level >= CtxLevelCompressed {
+		blocks = compactBlocks(blocks)
+	}
+
 	// --- Level 3: rank across all blocks by Score ---
 	if req.Level >= CtxLevelRanked {
 		blocks = c.rankBlocks(blocks, req.Question, req.Limit)
@@ -197,6 +216,33 @@ func (c *ContextCompiler) Compile(req ContextRequest) (*CompiledContext, error) 
 	}
 
 	return ctx, nil
+}
+
+// compactBlocks normalizes whitespace (especially noisy multiline logs and
+// decompiler output) and removes exact duplicate evidence while retaining the
+// first occurrence's provenance and ranking metadata.
+func compactBlocks(blocks []ContextBlock) []ContextBlock {
+	seen := make(map[string]struct{})
+	out := make([]ContextBlock, 0, len(blocks))
+	for _, block := range blocks {
+		items := make([]ContextItem, 0, len(block.Items))
+		for _, item := range block.Items {
+			item.Text = strings.Join(strings.Fields(item.Text), " ")
+			if item.Text == "" {
+				continue
+			}
+			key := item.Kind + "\x00" + item.Text
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			items = append(items, item)
+		}
+		if len(items) > 0 {
+			out = append(out, ContextBlock{Section: block.Section, Items: items})
+		}
+	}
+	return out
 }
 
 // applyPrivacy sanitizes the compiled context text with the project firewall.
@@ -269,7 +315,11 @@ func (c *ContextCompiler) memoryItems(mems []map[string]any, req ContextRequest)
 		title, _ := m["title"].(string)
 		content, _ := m["content"].(string)
 		if req.Level >= CtxLevelCompressed {
-			content = snippet(content, req.Question, 200)
+			maxLen := 200
+			if req.Profile == "small" {
+				maxLen = 120
+			}
+			content = snippet(content, req.Question, maxLen)
 		}
 		items = append(items, ContextItem{
 			Kind:       "memory",
@@ -289,7 +339,11 @@ func (c *ContextCompiler) docItems(docs []map[string]any, req ContextRequest) []
 		title, _ := d["title"].(string)
 		content, _ := d["content"].(string)
 		if req.Level >= CtxLevelCompressed {
-			content = snippet(content, req.Question, 200)
+			maxLen := 200
+			if req.Profile == "small" {
+				maxLen = 120
+			}
+			content = snippet(content, req.Question, maxLen)
 		}
 		items = append(items, ContextItem{
 			Kind:       "doc",
@@ -364,7 +418,11 @@ func (c *ContextCompiler) teamItems(tc map[string]any, req ContextRequest) []Con
 			content, _ := k["content"].(string)
 			id, _ := k["id"].(string)
 			if req.Level >= CtxLevelCompressed {
-				content = snippet(content, req.Question, 160)
+				maxLen := 160
+				if req.Profile == "small" {
+					maxLen = 100
+				}
+				content = snippet(content, req.Question, maxLen)
 			}
 			items = append(items, ContextItem{
 				Kind:       "team",

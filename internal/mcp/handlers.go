@@ -54,15 +54,15 @@ func (r *ToolRegistry) handleIndexProgress(args map[string]any) (map[string]any,
 	return map[string]any{
 		"project_id":  progress.ProjectID,
 		"root":        progress.Root,
-		"phase":      progress.Phase,
-		"files_done": progress.FilesDone,
+		"phase":       progress.Phase,
+		"files_done":  progress.FilesDone,
 		"files_total": progress.FilesTotal,
-		"functions":  progress.Functions,
-		"started_at": progress.StartedAt,
-		"updated_at": progress.UpdatedAt,
-		"finished":   progress.Finished,
-		"truncated":  progress.Truncated,
-		"error":      progress.Error,
+		"functions":   progress.Functions,
+		"started_at":  progress.StartedAt,
+		"updated_at":  progress.UpdatedAt,
+		"finished":    progress.Finished,
+		"truncated":   progress.Truncated,
+		"error":       progress.Error,
 	}, nil
 }
 
@@ -1119,6 +1119,7 @@ func (r *ToolRegistry) compiledContext(args map[string]any, level int, explain b
 		Limit:     limitOf(args),
 		MaxTokens: getInt(args, "max_tokens", 0),
 		Level:     level,
+		Profile:   getString(args, "profile"),
 		Explain:   explain,
 	}
 	if lvl, ok := args["level"]; ok && level != services.CtxLevelProvenance {
