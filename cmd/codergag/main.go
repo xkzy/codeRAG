@@ -21,13 +21,13 @@ const usage = "codergag - shared code knowledge graph for LLM agents\n\n" +
 	"  codergag setup [--yes]           first-time setup: write config, register MCP\n" +
 	"  codergag daemon [start|stop|restart|status]   manage the indexing daemon\n" +
 	"  codergag model [list|set|pull|remove]         manage local models (compat shim)\n" +
-	"  codergag index [run|status|watch] [root]      manage the codebase semantic index\n" +
+	"  codergag index [run [--force] [--path DIR] [root]|status|watch]   manage the codebase semantic index\n" +
 	"  codergag watch [--interval 1s]   live daemon status on stderr (indexes as files change)\n" +
 	"  codergag http [--addr :8080]     local agent/memory dashboard\n" +
 	"  codergag status [--json]         health, usage and token-savings report\n" +
 	"  codergag eval -project ID [--json]   score retrieval, resolution, freshness, memory\n" +
 	"  codergag maintenance             run the optimization pass once\n" +
-	"  codergag session [list|stats|flush|export] [--json]   inspect recorded tool usage\n" +
+	"  codergag session [list|stats|flush|export] [--json] [--session-id ID] [--format json|md] [--out FILE]   inspect usage\n" +
 	"  codergag inject [--project ID] [--file CLAUDE.md]   write a compact codebase map into a file\n" +
 	"  codergag register-instructions [--agent claude|all]   write tool instructions and register the MCP server\n" +
 	"  codergag doctor [--json]          health checks: graph, cache, daemon, config, storage\n" +
@@ -35,6 +35,7 @@ const usage = "codergag - shared code knowledge graph for LLM agents\n\n" +
 	"  codergag ctx <add|search|show|export|status|profile|reset>   manage project context records\n" +
 	"  codergag hook <SessionStart|UserPromptSubmit>   Claude Code hook entry point (reads JSON on stdin)\n" +
 	"  codergag uninstall [--keep-db]   remove codeRAG components\n" +
+	"  codergag update [--check] [--force]   check for and install updates\n" +
 	"  codergag mcp                     start as MCP server (internal; use serve)\n" +
 	"\n" +
 	"Environment:\n" +
@@ -60,6 +61,8 @@ func main() {
 		}
 		cfg = loaded
 	}
+	// Set version from build ldflags
+	cfg.Version = Version
 	cfg = configForCommand(cmd, args, cfg)
 	activeCfg = cfg
 	applyMemoryLimit()
@@ -105,6 +108,8 @@ func main() {
 		os.Exit(runHook(app, args))
 	case "uninstall":
 		os.Exit(runUninstall(args))
+	case "update":
+		os.Exit(runUpdate(args))
 	case "mcp":
 		serve(app)
 	default:
@@ -135,7 +140,7 @@ func configForCommand(cmd string, args []string, cfg config.Config) config.Confi
 		// keep the daemon
 	case "http", "status", "eval", "maintenance",
 		"session", "inject", "register-instructions", "doctor",
-		"setup", "daemon", "model", "config", "uninstall", "ctx", "hook":
+		"setup", "daemon", "model", "config", "uninstall", "ctx", "hook", "update":
 		cfg.Watch.Enabled = false
 	}
 	return cfg

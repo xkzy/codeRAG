@@ -9,17 +9,32 @@ import (
 	"time"
 
 	"codergag/internal/cache"
+	"codergag/internal/security"
 	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
 )
 
+type DatabaseType string
+
+const (
+	DatabaseSQLite   DatabaseType = "sqlite"
+	DatabasePostgres DatabaseType = "postgres"
+	DatabaseMongo    DatabaseType = "mongo"
+	DatabaseMemory   DatabaseType = "memory"
+)
+
 type DatabaseConfig struct {
-	Host     string `yaml:"host" xml:"host"`
-	Port     int    `yaml:"port" xml:"port"`
-	Database string `yaml:"database" xml:"database"`
-	User     string `yaml:"user" xml:"user"`
-	Password string `yaml:"password" xml:"password"`
-	Path     string `yaml:"path,omitempty" xml:"path,omitempty"`
+	// Type selects the storage backend: "sqlite" (gob file, default), "postgres", "mongo", "memory".
+	Type     DatabaseType `yaml:"type" xml:"type"`
+	Host     string       `yaml:"host" xml:"host"`
+	Port     int          `yaml:"port" xml:"port"`
+	Database string       `yaml:"database" xml:"database"`
+	User     string       `yaml:"user" xml:"user"`
+	Password string       `yaml:"password" xml:"password"`
+	// Path is the file path for SQLite (gob-backed) storage.
+	Path string `yaml:"path,omitempty" xml:"path,omitempty"`
+	// DSN is a raw connection string (postgres://... or mongodb://...). When set, it overrides Host/Port/Database/etc.
+	DSN string `yaml:"dsn,omitempty" xml:"dsn,omitempty"`
 }
 
 type ProjectConfig struct {
@@ -35,8 +50,22 @@ type IndexingConfig struct {
 }
 
 type GraphConfig struct {
-	CacheNodes int `yaml:"cache_nodes" xml:"cache_nodes"`
-	CacheEdges int `yaml:"cache_edges" xml:"cache_edges"`
+	CacheNodes int `yaml:"cache_nodes,omitempty" xml:"cache_nodes,omitempty"`
+	CacheEdges int `yaml:"cache_edges,omitempty" xml:"cache_edges,omitempty"`
+}
+
+type SecurityConfig struct {
+	AutoUpdate     bool   `yaml:"auto_update,omitempty" xml:"auto_update,omitempty"`
+	UpdateInterval string `yaml:"update_interval,omitempty" xml:"update_interval,omitempty"`
+	PatternSource  string `yaml:"pattern_source,omitempty" xml:"pattern_source,omitempty"`
+}
+
+func (s SecurityConfig) UpdateIntervalDuration() time.Duration {
+	d, err := time.ParseDuration(s.UpdateInterval)
+	if err != nil || d <= 0 {
+		return 24 * time.Hour
+	}
+	return d
 }
 
 type VerificationConfig struct {
@@ -123,16 +152,21 @@ type Config struct {
 	Verification VerificationConfig `yaml:"verification,omitempty" xml:"verification,omitempty"`
 	Graph        GraphConfig        `yaml:"graph,omitempty" xml:"graph,omitempty"`
 	Context      ContextConfig      `yaml:"context,omitempty" xml:"context,omitempty"`
+	LLM          LLMConfig          `yaml:"llm,omitempty" xml:"llm,omitempty"`
+	Security     SecurityConfig     `yaml:"security,omitempty" xml:"security,omitempty"`
+	Version      string             `yaml:"version,omitempty" xml:"version,omitempty"`
 }
 
 func Default() Config {
 	return Config{
 		Database: DatabaseConfig{
+			Type:     DatabaseSQLite,
 			Host:     "localhost",
 			Port:     2480,
 			Database: "codegraph",
-			User:     "admin",
-			Password: "admin",
+			User:     "",
+			Password: "",
+			Path:     ".codergag.db",
 		},
 		Projects: []ProjectConfig{},
 		Indexing: IndexingConfig{
@@ -157,6 +191,12 @@ func Default() Config {
 		Graph: GraphConfig{
 			CacheNodes: 1024,
 			CacheEdges: 1024,
+		},
+		LLM: DefaultLLMConfig(),
+		Security: SecurityConfig{
+			AutoUpdate:     true,
+			UpdateInterval: "24h",
+			PatternSource:  security.PatternSource,
 		},
 	}
 }
