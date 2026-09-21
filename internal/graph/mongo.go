@@ -1,5 +1,3 @@
-//go:build mongo
-
 package graph
 
 import (
