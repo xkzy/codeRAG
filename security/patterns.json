@@ -1,0 +1,513 @@
+[
+  {
+    "cwe": "CWE-78",
+    "language": "python",
+    "name": "subprocess with shell=True",
+    "regex": "(?i)subprocess\\.(call|run|Popen|check_output)\\(.*shell\\s*=\\s*True",
+    "confidence": 0.9
+  },
+  {
+    "cwe": "CWE-78",
+    "language": "c",
+    "name": "system() call",
+    "regex": "(?i)\\bsystem\\s*\\(",
+    "confidence": 0.8
+  },
+  {
+    "cwe": "CWE-78",
+    "language": "c",
+    "name": "popen() call",
+    "regex": "(?i)\\bpopen\\s*\\(",
+    "confidence": 0.8
+  },
+  {
+    "cwe": "CWE-78",
+    "language": "go",
+    "name": "exec.Command with shell",
+    "regex": "(?i)exec\\.Command\\s*\\(\\s*[\"'](/bin/sh|/bin/bash|cmd)[\"']",
+    "confidence": 0.7
+  },
+  {
+    "cwe": "CWE-78",
+    "language": "go",
+    "name": "os.system equivalent",
+    "regex": "(?i)exec\\.Command\\s*\\(\\s*[\"']sh[\"']\\s*,\\s*[\"']-c",
+    "confidence": 0.8
+  },
+  {
+    "cwe": "CWE-78",
+    "language": "javascript",
+    "name": "child_process exec with shell",
+    "regex": "(?i)require\\s*\\(\\s*[\"']child_process[\"']\\s*\\)\\.exec\\s*\\(",
+    "confidence": 0.7
+  },
+  {
+    "cwe": "CWE-89",
+    "language": "python",
+    "name": "SQL string formatting",
+    "regex": "(?i)(execute|cursor\\.(execute|executemany))\\s*\\(\\s*([\"'].*%[sdb].*[\"']|f[\"'].*SELECT|f[\"'].*INSERT|f[\"'].*UPDATE|f[\"'].*DELETE)",
+    "confidence": 0.85
+  },
+  {
+    "cwe": "CWE-89",
+    "language": "go",
+    "name": "SQL string formatting",
+    "regex": "(?i)\\b(Exec|Query)(.*Context)?\\s*\\(\\s*.*fmt\\.Sprintf",
+    "confidence": 0.85
+  },
+  {
+    "cwe": "CWE-89",
+    "language": "c",
+    "name": "sprintf in SQL",
+    "regex": "(?i)sprintf.*SELECT|sprintf.*INSERT|sprintf.*UPDATE|sprintf.*DELETE",
+    "confidence": 0.7
+  },
+  {
+    "cwe": "CWE-89",
+    "language": "java",
+    "name": "string concatenation in SQL",
+    "regex": "(?i)(Statement|PreparedStatement)\\s*\\.\\s*(execute|prepare)\\s*\\([^)]*\\+",
+    "confidence": 0.6
+  },
+  {
+    "cwe": "CWE-89",
+    "language": "javascript",
+    "name": "SQL string concatenation",
+    "regex": "(?i)(query|execute)\\s*\\(\\s*['\"].*\\+.*[+\\s].*['\"]",
+    "confidence": 0.5
+  },
+  {
+    "cwe": "CWE-89",
+    "language": "php",
+    "name": "SQL injection in PHP",
+    "regex": "(?i)(mysql_query|mysqli::query)\\s*\\(\\s*['\"].*\\$_(GET|POST|REQUEST)",
+    "confidence": 0.9
+  },
+  {
+    "cwe": "CWE-79",
+    "language": "python",
+    "name": "mark_safe on user input",
+    "regex": "(?i)mark_safe\\s*\\(",
+    "confidence": 0.7
+  },
+  {
+    "cwe": "CWE-79",
+    "language": "python",
+    "name": "render_to_string with request",
+    "regex": "(?i)render_to_string\\s*\\([^)]*request",
+    "confidence": 0.6
+  },
+  {
+    "cwe": "CWE-79",
+    "language": "javascript",
+    "name": "dangerouslySetInnerHTML",
+    "regex": "(?i)dangerouslySetInnerHTML",
+    "confidence": 0.4
+  },
+  {
+    "cwe": "CWE-79",
+    "language": "javascript",
+    "name": "innerHTML assignment",
+    "regex": "(?i)\\.innerHTML\\s*=",
+    "confidence": 0.5
+  },
+  {
+    "cwe": "CWE-79",
+    "language": "java",
+    "name": "unescaped output in JSP",
+    "regex": "\u003c%[^\u003e]*\u003c%=.*request\\.getParameter",
+    "confidence": 0.6
+  },
+  {
+    "cwe": "CWE-119",
+    "language": "c",
+    "name": "strcpy without length",
+    "regex": "(?i)\\bstrcpy\\s*\\(",
+    "confidence": 0.85
+  },
+  {
+    "cwe": "CWE-119",
+    "language": "c",
+    "name": "strcat without length",
+    "regex": "(?i)\\bstrcat\\s*\\(",
+    "confidence": 0.85
+  },
+  {
+    "cwe": "CWE-119",
+    "language": "c",
+    "name": "sprintf without snprintf",
+    "regex": "(?i)\\bsprintf\\s*\\(",
+    "confidence": 0.75
+  },
+  {
+    "cwe": "CWE-119",
+    "language": "c",
+    "name": "gets() call",
+    "regex": "(?i)\\bgets\\s*\\(",
+    "confidence": 0.95
+  },
+  {
+    "cwe": "CWE-119",
+    "language": "c",
+    "name": "scanf without width limit",
+    "regex": "(?i)\\bscanf\\s*\\(\\s*[\"'][^\"']*%[^\"']*[\"']",
+    "confidence": 0.7
+  },
+  {
+    "cwe": "CWE-125",
+    "language": "c",
+    "name": "array access without bounds check",
+    "regex": "(?i)\\barr\\[[^\\]]+\\]",
+    "confidence": 0.5
+  },
+  {
+    "cwe": "CWE-787",
+    "language": "c",
+    "name": "memcpy without length check",
+    "regex": "(?i)\\bmemcpy\\s*\\(",
+    "confidence": 0.6
+  },
+  {
+    "cwe": "CWE-416",
+    "language": "c",
+    "name": "free followed by use",
+    "regex": "(?i)\\bfree\\s*\\(",
+    "confidence": 0.3
+  },
+  {
+    "cwe": "CWE-22",
+    "language": "python",
+    "name": "path traversal from user input",
+    "regex": "(?i)open\\s*\\(\\s*.*request\\.",
+    "confidence": 0.8
+  },
+  {
+    "cwe": "CWE-22",
+    "language": "c",
+    "name": "path traversal fopen",
+    "regex": "(?i)\\bfopen\\s*\\(\\s*.*getenv",
+    "confidence": 0.6
+  },
+  {
+    "cwe": "CWE-22",
+    "language": "go",
+    "name": "path traversal with user input",
+    "regex": "(?i)os\\.Open\\s*\\(\\s*.*request\\.|os\\.OpenFile\\s*\\(\\s*.*user",
+    "confidence": 0.5
+  },
+  {
+    "cwe": "CWE-22",
+    "language": "javascript",
+    "name": "path traversal in require",
+    "regex": "(?i)require\\s*\\(\\s*.*req\\.params|require\\s*\\(\\s*.*req\\.query",
+    "confidence": 0.4
+  },
+  {
+    "cwe": "CWE-22",
+    "language": "php",
+    "name": "path traversal include",
+    "regex": "(?i)(include|require)\\s*\\(\\s*\\$_(GET|POST|REQUEST|COOKIE)",
+    "confidence": 0.7
+  },
+  {
+    "cwe": "CWE-502",
+    "language": "python",
+    "name": "pickle load",
+    "regex": "(?i)\\bpickle\\.(loads|load)\\s*\\(",
+    "confidence": 0.9
+  },
+  {
+    "cwe": "CWE-502",
+    "language": "python",
+    "name": "yaml load without safe",
+    "regex": "(?i)\\byaml\\.load\\s*\\(",
+    "confidence": 0.8
+  },
+  {
+    "cwe": "CWE-502",
+    "language": "python",
+    "name": "yaml unsafe load_all",
+    "regex": "(?i)yaml\\.load_all\\s*\\(",
+    "confidence": 0.7
+  },
+  {
+    "cwe": "CWE-502",
+    "language": "java",
+    "name": "Java deserialization",
+    "regex": "(?i)(ObjectInputStream|readObject)\\s*\\(",
+    "confidence": 0.7
+  },
+  {
+    "cwe": "CWE-502",
+    "language": "javascript",
+    "name": "unsafe deserialization",
+    "regex": "(?i)(eval\\(|Function\\(|deserialize)",
+    "confidence": 0.6
+  },
+  {
+    "cwe": "CWE-190",
+    "language": "c",
+    "name": "integer overflow potential",
+    "regex": "(?i)\\bmalloc\\s*\\(\\s*[^)]*[\\+\\*]",
+    "confidence": 0.5
+  },
+  {
+    "cwe": "CWE-190",
+    "language": "rust",
+    "name": "unsafe arithmetic",
+    "regex": "(?i)unchecked_(add|sub|mul|div|rem)",
+    "confidence": 0.6
+  },
+  {
+    "cwe": "CWE-20",
+    "language": "python",
+    "name": "eval() call",
+    "regex": "(?i)\\beval\\s*\\(",
+    "confidence": 0.9
+  },
+  {
+    "cwe": "CWE-20",
+    "language": "python",
+    "name": "exec() call",
+    "regex": "(?i)\\bexec\\s*\\(",
+    "confidence": 0.8
+  },
+  {
+    "cwe": "CWE-20",
+    "language": "javascript",
+    "name": "eval() call",
+    "regex": "(?i)\\beval\\s*\\(",
+    "confidence": 0.7
+  },
+  {
+    "cwe": "CWE-20",
+    "language": "php",
+    "name": "eval() call",
+    "regex": "(?i)\\beval\\s*\\(",
+    "confidence": 0.8
+  },
+  {
+    "cwe": "CWE-1333",
+    "language": "all",
+    "name": "potentially evil regex",
+    "regex": "\\([^)]*[+*][^)]*\\)[+*]",
+    "confidence": 0.4
+  },
+  {
+    "cwe": "CWE-1333",
+    "language": "javascript",
+    "name": "evil regex in JavaScript",
+    "regex": "(?i)(RegExp|\\.match|\\.replace|\\.split)\\s*\\(\\s*[\"'][^\"']*[^\\]\"']*[+*].*[+*].*[\"']",
+    "confidence": 0.5
+  },
+  {
+    "cwe": "CWE-306",
+    "language": "c",
+    "name": "main without argument validation",
+    "regex": "(?i)\\bint\\s+main\\s*\\(\\s*int\\s+argc",
+    "confidence": 0.2
+  },
+  {
+    "cwe": "CWE-352",
+    "language": "python",
+    "name": "missing CSRF token",
+    "regex": "(?i)@app\\.route\\([^)]*\\)\\s*\\n\\s*def\\s+\\w+\\([^)]*\\)\\s*:\\s*\\n\\s*[^@]*\\b(request\\.(post|get|put|delete|patch))",
+    "confidence": 0.5
+  },
+  {
+    "cwe": "CWE-352",
+    "language": "javascript",
+    "name": "fetch without credentials mode",
+    "regex": "(?i)\\bfetch\\s*\\(",
+    "confidence": 0.3
+  },
+  {
+    "cwe": "CWE-862",
+    "language": "python",
+    "name": "no authentication decorator",
+    "regex": "(?i)@app\\.route\\([^)]*methods\\s*=\\s*\\[\"?POST\"?\\s*,\\s*\"GET\"?\\s*\\]\\)",
+    "confidence": 0.4
+  },
+  {
+    "cwe": "CWE-862",
+    "language": "go",
+    "name": "HTTP handler without auth",
+    "regex": "(?i)http\\.HandleFunc\\s*\\(\\s*[\"'][^\"']*[\"']\\s*,\\s*func\\s*\\(",
+    "confidence": 0.4
+  },
+  {
+    "cwe": "CWE-798",
+    "language": "all",
+    "name": "hardcoded password string",
+    "regex": "(?i)(password|passwd|pwd)\\s*[:=]\\s*[\"'][^\"'\u003c\u003e]{3,}[\"']",
+    "confidence": 0.9
+  },
+  {
+    "cwe": "CWE-798",
+    "language": "all",
+    "name": "hardcoded API key",
+    "regex": "(?i)(api_key|apikey|secret|access_token)\\s*[:=]\\s*[\"'][^\"'\u003c\u003e]{8,}[\"']",
+    "confidence": 0.8
+  },
+  {
+    "cwe": "CWE-798",
+    "language": "python",
+    "name": "django secret key hardcoded",
+    "regex": "(?i)SECRET_KEY\\s*=\\s*[\"'].*[\"']",
+    "confidence": 0.9
+  },
+  {
+    "cwe": "CWE-798",
+    "language": "go",
+    "name": "hardcoded credential",
+    "regex": "(?i)(\"password\"|\"secret\")\\s*:\\s*[\"'][^\"'\u003c\u003e]{3,}[\"']",
+    "confidence": 0.7
+  },
+  {
+    "cwe": "CWE-259",
+    "language": "all",
+    "name": "hardcoded username/password",
+    "regex": "(?i)(username|user)\\s*[:=]\\s*[\"'](admin|root|test|guest)[\"']",
+    "confidence": 0.6
+  },
+  {
+    "cwe": "CWE-918",
+    "language": "python",
+    "name": "requests to user-controlled URL",
+    "regex": "(?i)requests\\.(get|post|put|delete)\\s*\\(\\s*.*request\\.",
+    "confidence": 0.7
+  },
+  {
+    "cwe": "CWE-918",
+    "language": "go",
+    "name": "HTTP request to user URL",
+    "regex": "(?i)http\\.Get\\s*\\(\\s*.*request\\.|http\\.Post\\s*\\(\\s*.*request\\.",
+    "confidence": 0.6
+  },
+  {
+    "cwe": "CWE-918",
+    "language": "javascript",
+    "name": "fetch to user-controlled URL",
+    "regex": "(?i)fetch\\s*\\(\\s*.*\\$\\{|fetch\\s*\\(\\s*.*req\\.",
+    "confidence": 0.6
+  },
+  {
+    "cwe": "CWE-918",
+    "language": "java",
+    "name": "URL open from user input",
+    "regex": "(?i)new\\s+(URL|HttpURLConnection)\\s*\\(\\s*.*(request|param)",
+    "confidence": 0.6
+  },
+  {
+    "cwe": "CWE-327",
+    "language": "python",
+    "name": "MD5 hash usage",
+    "regex": "(?i)\\bmd5\\s*\\(",
+    "confidence": 0.6
+  },
+  {
+    "cwe": "CWE-327",
+    "language": "python",
+    "name": "SHA1 hash usage",
+    "regex": "(?i)\\bsha1\\s*\\(",
+    "confidence": 0.5
+  },
+  {
+    "cwe": "CWE-327",
+    "language": "python",
+    "name": "DES/RC4 cipher usage",
+    "regex": "(?i)\\b(des|rc4|arc4|ecb)\\b",
+    "confidence": 0.7
+  },
+  {
+    "cwe": "CWE-327",
+    "language": "java",
+    "name": "weak cipher usage",
+    "regex": "(?i)(MessageDigest|Cipher)\\s*\\.\\s*(getInstance)\\s*\\(\\s*[\"'](md5|des|rc4|aes/ecb)",
+    "confidence": 0.8
+  },
+  {
+    "cwe": "CWE-327",
+    "language": "go",
+    "name": "MD5/SHA1 hash usage",
+    "regex": "(?i)md5\\.Sum|sha1\\.Sum|md5\\.New|sha1\\.New",
+    "confidence": 0.5
+  },
+  {
+    "cwe": "CWE-327",
+    "language": "javascript",
+    "name": "crypto.createCipher",
+    "regex": "(?i)createCipher\\s*\\(",
+    "confidence": 0.6
+  },
+  {
+    "cwe": "CWE-326",
+    "language": "c",
+    "name": "insecure random",
+    "regex": "(?i)\\brand\\s*\\(",
+    "confidence": 0.4
+  },
+  {
+    "cwe": "CWE-639",
+    "language": "python",
+    "name": "user ID without authorization",
+    "regex": "(?i)User\\.objects\\.get\\s*\\(\\s*id\\s*=\\s*request\\.",
+    "confidence": 0.6
+  },
+  {
+    "cwe": "CWE-639",
+    "language": "javascript",
+    "name": "direct DB query with user ID",
+    "regex": "(?i)findById\\s*\\(\\s*req\\.params",
+    "confidence": 0.5
+  },
+  {
+    "cwe": "CWE-400",
+    "language": "javascript",
+    "name": "large JSON parse",
+    "regex": "(?i)JSON\\.parse\\s*\\(\\s*.*req\\.(body|query)",
+    "confidence": 0.4
+  },
+  {
+    "cwe": "CWE-476",
+    "language": "c",
+    "name": "NULL pointer dereference",
+    "regex": "(?i)\\*\\s*\\(?\\w+\\s*\\)",
+    "confidence": 0.3
+  },
+  {
+    "cwe": "CWE-119",
+    "language": "rust",
+    "name": "unsafe block",
+    "regex": "(?i)\\bunsafe\\b\\s*\\{",
+    "confidence": 0.4
+  },
+  {
+    "cwe": "CWE-326",
+    "language": "all",
+    "name": "insecure random number generator",
+    "regex": "(?i)\\brand\\s*\\(\\s*\\)\\s*%\\s*\\d+",
+    "confidence": 0.5
+  },
+  {
+    "cwe": "CWE-1004",
+    "language": "all",
+    "name": "insecure SSL/TLS",
+    "regex": "(?i)(ssl_verifypeer|verify_ssl|sslversion)\\s*=\\s*(false|0|SSLv2|SSLv3)",
+    "confidence": 0.8
+  },
+  {
+    "cwe": "CWE-611",
+    "language": "all",
+    "name": "XXE: XML external entity",
+    "regex": "(?i)(XMLParser|SimpleXMLElement|DOMDocument)\\s*.*(LOAD_DTD|loadXml).*entity",
+    "confidence": 0.6
+  },
+  {
+    "cwe": "CWE-1021",
+    "language": "all",
+    "name": "insecure redirect",
+    "regex": "(?i)(redirect|location)\\s*[:=]\\s*.*req(uest|\\.params)",
+    "confidence": 0.5
+  }
+]

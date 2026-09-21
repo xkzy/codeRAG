@@ -29,7 +29,9 @@ func (s *SemanticCache) Index(entry *CacheEntry, query string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entry.Embedding = embedQuery(query)
+	if entry.Embedding == nil {
+		entry.Embedding = embedQuery(query)
+	}
 	s.entries = append(s.entries, entry)
 	if excess := len(s.entries) - s.config.MaxEntries; excess > 0 {
 		copy(s.entries, s.entries[excess:])

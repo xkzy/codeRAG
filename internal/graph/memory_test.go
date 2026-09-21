@@ -2,6 +2,8 @@ package graph
 
 import (
 	"testing"
+
+	"codergag/internal/models"
 )
 
 func TestMemoryUpsertAndGetNode(t *testing.T) {
@@ -197,5 +199,148 @@ func TestMemoryUpsertMergesProperties(t *testing.T) {
 	}
 	if n2.Properties["version"] != "1.0" {
 		t.Fatal("merged node should gain version")
+	}
+}
+
+func TestMemoryUpsertNodeInvalidKind(t *testing.T) {
+	g := NewMemoryGraphRepository()
+	if _, err := g.UpsertNode("bad-kind!", map[string]any{"name": "x"}, nil); err == nil {
+		t.Fatal("upsert with invalid kind should return error")
+	}
+}
+
+func TestMemoryUpsertNodeMissingIDGeneratesOne(t *testing.T) {
+	g := NewMemoryGraphRepository()
+	node, err := g.UpsertNode("Function", map[string]any{"name": "foo"}, nil)
+	if err != nil || node.ID == "" {
+		t.Fatalf("expected auto-generated ID, got err=%v node=%v", err, node)
+	}
+}
+
+func TestMemoryLinkInvalidKind(t *testing.T) {
+	g := NewMemoryGraphRepository()
+	a, _ := g.UpsertNode("Function", map[string]any{"name": "a"}, nil)
+	b, _ := g.UpsertNode("Function", map[string]any{"name": "b"}, nil)
+	if _, err := g.Link("bad kind", a.ID, b.ID, nil); err == nil {
+		t.Fatal("link with invalid kind should return error")
+	}
+}
+
+func TestMemoryLinkDuplicateProperties(t *testing.T) {
+	g := NewMemoryGraphRepository()
+	a, _ := g.UpsertNode("Function", map[string]any{"name": "a"}, nil)
+	b, _ := g.UpsertNode("Function", map[string]any{"name": "b"}, nil)
+	props := map[string]any{"source": "test"}
+	e1, _ := g.Link("CALLS", a.ID, b.ID, props)
+	e2, _ := g.Link("CALLS", a.ID, b.ID, props)
+	if e1.ID != e2.ID {
+		t.Fatal("identical link should return same edge")
+	}
+}
+
+func TestMemoryNeighborsDirBoth(t *testing.T) {
+	g := NewMemoryGraphRepository()
+	a, _ := g.UpsertNode("Function", map[string]any{"name": "a"}, nil)
+	b, _ := g.UpsertNode("Function", map[string]any{"name": "b"}, nil)
+	g.Link("CALLS", a.ID, b.ID, nil)
+	nbrs, err := g.Neighbors(b.ID, "CALLS", DirBoth)
+	if err != nil || len(nbrs) != 1 {
+		t.Fatalf("DirBoth should find incoming edge to b: %v %v", nbrs, err)
+	}
+}
+
+func TestMemoryNeighborsDirBothBidirectional(t *testing.T) {
+	g := NewMemoryGraphRepository()
+	a, _ := g.UpsertNode("Function", map[string]any{"name": "a"}, nil)
+	b, _ := g.UpsertNode("Function", map[string]any{"name": "b"}, nil)
+	g.Link("CALLS", a.ID, b.ID, nil)
+	nbrs, err := g.Neighbors(a.ID, "CALLS", DirBoth)
+	if err != nil || len(nbrs) != 1 {
+		t.Fatalf("DirBoth from a should find outgoing edge: %v %v", nbrs, err)
+	}
+}
+
+func TestMemoryNeighborsMissingTargetNode(t *testing.T) {
+	g := NewMemoryGraphRepository()
+	a, _ := g.UpsertNode("Function", map[string]any{"name": "a"}, nil)
+	g.Link("CALLS", a.ID, "nonexistent", nil)
+	nbrs, err := g.Neighbors(a.ID, "CALLS", DirOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nbrs) != 0 {
+		t.Fatalf("missing target node should not appear in neighbors: %v", nbrs)
+	}
+}
+
+func TestMemoryNeighborsDirInMissingSourceNode(t *testing.T) {
+	g := NewMemoryGraphRepository()
+	b, _ := g.UpsertNode("Function", map[string]any{"name": "b"}, nil)
+	g.Link("CALLS", "nonexistent", b.ID, nil)
+	nbrs, err := g.Neighbors(b.ID, "CALLS", DirIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nbrs) != 0 {
+		t.Fatalf("missing source node should not appear in neighbors: %v", nbrs)
+	}
+}
+
+func TestMemoryNeighborsDirBothMissingNodes(t *testing.T) {
+	g := NewMemoryGraphRepository()
+	a, _ := g.UpsertNode("Function", map[string]any{"name": "a"}, nil)
+	g.Link("CALLS", a.ID, "nonexistent", nil)
+	g.Link("CALLS", "nonexistent", a.ID, nil)
+	nbrs, err := g.Neighbors(a.ID, "CALLS", DirBoth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nbrs) != 0 {
+		t.Fatalf("missing nodes should not appear in DirBoth neighbors: %v", nbrs)
+	}
+}
+
+func TestPresent(t *testing.T) {
+	node := &models.Node{
+		ID:   "n1",
+		Kind: "Function",
+		Properties: map[string]any{
+			"name":       "foo",
+			"project_id": "p1",
+		},
+	}
+	result := Present(node)
+	if result["id"] != "n1" {
+		t.Errorf("expected id=n1, got %v", result["id"])
+	}
+	if result["kind"] != "Function" {
+		t.Errorf("expected kind=Function, got %v", result["kind"])
+	}
+	if result["name"] != "foo" {
+		t.Errorf("expected name=foo, got %v", result["name"])
+	}
+	if result["project_id"] != "p1" {
+		t.Errorf("expected project_id=p1, got %v", result["project_id"])
+	}
+}
+
+func TestPresentNilNode(t *testing.T) {
+	if result := Present(nil); result != nil {
+		t.Errorf("expected nil for nil node, got %v", result)
+	}
+}
+
+func TestMemoryCountsEmpty(t *testing.T) {
+	g := NewMemoryGraphRepository()
+	nc, ec := g.Counts()
+	if len(nc) != 0 || len(ec) != 0 {
+		t.Fatalf("empty counts: nodes=%v edges=%v", nc, ec)
+	}
+}
+
+func TestMemoryRemoveNonexistentEdges(t *testing.T) {
+	g := NewMemoryGraphRepository()
+	if err := g.RemoveEdges([]string{"does-not-exist"}); err != nil {
+		t.Fatal(err)
 	}
 }

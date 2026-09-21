@@ -7,6 +7,16 @@ import (
 	"codergag/internal/reverse"
 )
 
+const MaxDecompilerOutputLen = 50000
+const MaxInstructionFieldLen = 500
+
+func truncate(s string, maxLen int) string {
+	if maxLen > 0 && len(s) > maxLen {
+		return s[:maxLen] + "...[truncated]"
+	}
+	return s
+}
+
 type ReverseEngineeringService struct {
 	graph graph.GraphRepository
 }
@@ -52,16 +62,21 @@ func (s *ReverseEngineeringService) ImportBinary(projectID string, data reverse.
 		s.graph.Link("CONTAINS", binary.ID, fn.ID, nil)
 
 		if item.DecompilerOutput != "" {
-			output, err := s.graph.UpsertNode("DecompilerOutput", map[string]any{
+			// Truncate overly long decompiler output to prevent token explosion
+			// in downstream LLM analysis. The full output can be retrieved from
+			// the original source if needed.
+			outputText := truncate(item.DecompilerOutput, MaxDecompilerOutputLen)
+			outputNode, err := s.graph.UpsertNode("DecompilerOutput", map[string]any{
 				"project_id": projectID,
 				"binary_id":  data.BinaryID,
 				"address":    item.Address,
 			}, map[string]any{
-				"text": item.DecompilerOutput,
-				"tool": data.Tool,
+				"text":      outputText,
+				"tool":      data.Tool,
+				"truncated": len(outputText) < len(item.DecompilerOutput),
 			})
 			if err == nil {
-				s.graph.Link("DECOMPILED_AS", fn.ID, output.ID, nil)
+				s.graph.Link("DECOMPILED_AS", fn.ID, outputNode.ID, nil)
 			}
 		}
 
@@ -108,8 +123,8 @@ func (s *ReverseEngineeringService) ImportBinary(projectID string, data reverse.
 					"binary_id":  data.BinaryID,
 					"address":    insn.Address,
 				}, map[string]any{
-					"mnemonic":  insn.Mnemonic,
-					"operands":  insn.Operands,
+					"mnemonic":  truncate(insn.Mnemonic, MaxInstructionFieldLen),
+					"operands":  truncate(insn.Operands, MaxInstructionFieldLen),
 					"stable_id": ids.InstructionID(data.BinaryID, item.Address, bb.Address, insn.Address),
 				})
 				if err != nil {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -229,5 +230,335 @@ func TestSplitDocumentSectionsByParagraphs(t *testing.T) {
 	}
 	if !strings.Contains(sections[0]["content"].(string), "First") {
 		t.Fatalf("first content: %v", sections[0])
+	}
+}
+
+// ---- CSV/TSV tests ----
+
+func TestExtractTextCSV(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "d.csv")
+	if err := os.WriteFile(p, []byte("name,age,city\nAlice,30,NYC\nBob,25,LA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text, err := ExtractText(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "Alice") || !strings.Contains(text, "Bob") {
+		t.Fatalf("missing data: %q", text)
+	}
+	if !strings.Contains(text, "|") {
+		t.Fatalf("expected pipe separator in CSV output: %q", text)
+	}
+}
+
+func TestExtractTextTSV(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "d.tsv")
+	if err := os.WriteFile(p, []byte("name\tage\tcity\nAlice\t30\tNYC\nBob\t25\tLA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text, err := ExtractText(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "Alice") || !strings.Contains(text, "Bob") {
+		t.Fatalf("missing data: %q", text)
+	}
+}
+
+func TestExtractTextCSVWithCommasInField(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "d.csv")
+	if err := os.WriteFile(p, []byte("name,description\nAlice,\"Hello, world\""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text, err := ExtractText(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "Hello, world") {
+		t.Fatalf("missing field with comma: %q", text)
+	}
+}
+
+func TestSplitTableSectionsCSV(t *testing.T) {
+	content := "name,age,city\nAlice,30,NYC\nBob,25,LA"
+	sections := splitTableSections(content, ',')
+	if len(sections) != 2 {
+		t.Fatalf("expected 2 sections, got %d", len(sections))
+	}
+	if sections[0]["heading"] != "Alice" {
+		t.Errorf("first heading: %v", sections[0]["heading"])
+	}
+	if sections[1]["heading"] != "Bob" {
+		t.Errorf("second heading: %v", sections[1]["heading"])
+	}
+	// Verify header is included in content
+	if !strings.Contains(sections[0]["content"].(string), "name") {
+		t.Errorf("expected header in content: %v", sections[0]["content"])
+	}
+	if !strings.Contains(sections[0]["content"].(string), "Alice") {
+		t.Errorf("expected row data in content: %v", sections[0]["content"])
+	}
+}
+
+func TestSplitTableSectionsTSV(t *testing.T) {
+	content := "name\tage\nAlice\t30\nBob\t25"
+	sections := splitTableSections(content, '\t')
+	if len(sections) != 2 {
+		t.Fatalf("expected 2 sections, got %d", len(sections))
+	}
+}
+
+func TestSplitTableSectionsHeaderOnly(t *testing.T) {
+	content := "name,age,city"
+	sections := splitTableSections(content, ',')
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section (header only), got %d", len(sections))
+	}
+}
+
+func TestIndexDocumentCSV(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "d.csv")
+	if err := os.WriteFile(p, []byte("name,age\nAlice,30\nBob,25"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := ApplicationInMemory()
+	res, err := app.Documents.IndexDocument("p", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res["sections"] != 2 {
+		t.Fatalf("expected 2 sections, got %v", res["sections"])
+	}
+	if res["format"] != ".csv" {
+		t.Fatalf("format: %v", res["format"])
+	}
+}
+
+func TestIndexDocumentTSV(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "d.tsv")
+	if err := os.WriteFile(p, []byte("name\tage\nAlice\t30\nBob\t25"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := ApplicationInMemory()
+	res, err := app.Documents.IndexDocument("p", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res["sections"] != 2 {
+		t.Fatalf("expected 2 sections, got %v", res["sections"])
+	}
+	if res["format"] != ".tsv" {
+		t.Fatalf("format: %v", res["format"])
+	}
+}
+
+// ---- XLSX tests ----
+
+func writeMinimalXLSX(t *testing.T, path string, sheets ...xlsxSheetData) error {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	zw := zip.NewWriter(f)
+	defer zw.Close()
+
+	// Write shared strings
+	sharedStrings := []string{}
+	for _, s := range sheets {
+		for _, row := range s.Rows {
+			for _, cell := range row.Cells {
+				if cell.IsShared {
+					sharedStrings = append(sharedStrings, cell.Value)
+				}
+			}
+		}
+	}
+
+	ssXML := buildXlsxSharedStringsXML(sharedStrings)
+	ssFile, err := zw.Create("xl/sharedStrings.xml")
+	if err != nil {
+		return err
+	}
+	ssFile.Write([]byte(ssXML))
+
+	for i, sheet := range sheets {
+		sheetPath := fmt.Sprintf("xl/worksheets/sheet%d.xml", i+1)
+		wsFile, err := zw.Create(sheetPath)
+		if err != nil {
+			return err
+		}
+		wsFile.Write([]byte(buildXlsxSheetXML(sheet, len(sharedStrings))))
+	}
+
+	// Write minimum required metadata files
+	typesFile, err := zw.Create("[Content_Types].xml")
+	if err != nil {
+		return err
+	}
+	typesFile.Write([]byte(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>`))
+
+	relsFile, err := zw.Create("_rels/.rels")
+	if err != nil {
+		return err
+	}
+	relsFile.Write([]byte(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`))
+
+	wbFile, err := zw.Create("xl/workbook.xml")
+	if err != nil {
+		return err
+	}
+	wbFile.Write([]byte(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+		buildXlsxWorkbookSheets(len(sheets)) +
+		`</workbook>`))
+
+	wbRelsFile, err := zw.Create("xl/_rels/workbook.xml.rels")
+	if err != nil {
+		return err
+	}
+	wbRelsFile.Write([]byte(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+		buildXlsxWorkbookRels(len(sheets)) +
+		`</Relationships>`))
+
+	return nil
+}
+
+type xlsxSheetData struct {
+	Name string
+	Rows []xlsxRowData
+}
+
+type xlsxRowData struct {
+	Cells []xlsxCellData
+}
+
+type xlsxCellData struct {
+	Value     string
+	IsShared  bool
+}
+
+func buildXlsxSharedStringsXML(strs []string) string {
+	var sb strings.Builder
+	sb.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`)
+	sb.WriteString(`<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="`)
+	sb.WriteString(strconv.Itoa(len(strs)))
+	sb.WriteString(`" uniqueCount="`)
+	sb.WriteString(strconv.Itoa(len(strs)))
+	sb.WriteString(`">`)
+	for _, s := range strs {
+		escaped := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
+		sb.WriteString(`<si><t>`)
+		sb.WriteString(escaped)
+		sb.WriteString(`</t></si>`)
+	}
+	sb.WriteString(`</sst>`)
+	return sb.String()
+}
+
+func buildXlsxSheetXML(sheet xlsxSheetData, ssCount int) string {
+	var sb strings.Builder
+	sb.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`)
+	sb.WriteString(`<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`)
+	sb.WriteString(`<sheetData>`)
+
+	// Track shared string values to assign indices
+	ssMap := make(map[string]int)
+	ssIdx := 0
+	for _, row := range sheet.Rows {
+		sb.WriteString(`<row r="1">`)
+		for colIdx, cell := range row.Cells {
+			colName := string(rune('A'+colIdx)) + "1"
+			if cell.IsShared {
+				if _, exists := ssMap[cell.Value]; !exists {
+					ssMap[cell.Value] = ssIdx
+					ssIdx++
+				}
+				sb.WriteString(`<c r="`)
+				sb.WriteString(colName)
+				sb.WriteString(`" t="s"><v>`)
+				sb.WriteString(strconv.Itoa(ssMap[cell.Value]))
+				sb.WriteString(`</v></c>`)
+			} else {
+				sb.WriteString(`<c r="`)
+				sb.WriteString(colName)
+				sb.WriteString(`"><v>`)
+				sb.WriteString(strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(cell.Value))
+				sb.WriteString(`</v></c>`)
+			}
+		}
+		sb.WriteString(`</row>`)
+	}
+	sb.WriteString(`</sheetData></worksheet>`)
+	return sb.String()
+}
+
+func buildXlsxWorkbookSheets(count int) string {
+	var sb strings.Builder
+	for i := 0; i < count; i++ {
+		sb.WriteString(`<sheet name="Sheet`)
+		sb.WriteString(strconv.Itoa(i+1))
+		sb.WriteString(`" sheetId="`)
+		sb.WriteString(strconv.Itoa(i+1))
+		sb.WriteString(`" r:id="rId1"/>`)
+	}
+	return sb.String()
+}
+
+func buildXlsxWorkbookRels(sheetCount int) string {
+	var sb strings.Builder
+	for i := 0; i < sheetCount; i++ {
+		sb.WriteString(`<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet`)
+		sb.WriteString(strconv.Itoa(i+1))
+		sb.WriteString(`.xml"/>`)
+	}
+	return sb.String()
+}
+
+func TestExtractTextXLSX(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "d.xlsx")
+	if err := writeMinimalXLSX(t, p, xlsxSheetData{
+		Name: "Sheet1",
+		Rows: []xlsxRowData{
+			{Cells: []xlsxCellData{
+				{Value: "Name", IsShared: true},
+				{Value: "Age", IsShared: true},
+			}},
+			{Cells: []xlsxCellData{
+				{Value: "Alice", IsShared: true},
+				{Value: "30", IsShared: false},
+			}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	text, err := ExtractText(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "Alice") {
+		t.Fatalf("missing Alice: %q", text)
+	}
+	if !strings.Contains(text, "sheet1") {
+		t.Fatalf("missing sheet identifier: %q", text)
 	}
 }

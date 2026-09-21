@@ -1,8 +1,10 @@
 package services
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -67,15 +69,17 @@ func (s *SecurityAuditService) AuditProject(projectID string, path string, useCa
 		return nil, err
 	}
 
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("path does not exist: %s", absPath)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("not a directory: %s", absPath)
+	}
+
 	var allFindings []Finding
 	filesScanned := 0
 	languageCount := map[string]int{}
-
-	entries, err := os.ReadDir(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("not a directory: %s", absPath)
-	}
-	_ = entries
 
 	supportedExts := map[string]string{
 		".py":   "python",
@@ -466,4 +470,185 @@ func ensureInt(m map[string]any, key string, defaultVal int) int {
 		}
 	}
 	return defaultVal
+}
+
+// semgrepFinding is a single result from `semgrep --json --output`.
+type semgrepFinding struct {
+	CheckID  string `json:"check_id"`
+	Path     string `json:"path"`
+	Start    semgrepPos `json:"start"`
+	End      semgrepPos `json:"end"`
+	Results  []semgrepResult `json:"results,omitempty"`
+	Extra    semgrepExtra `json:"extra"`
+}
+
+type semgrepPos struct {
+	Line   int `json:"line"`
+	Col    int `json:"column"`
+}
+
+type semgrepExtra struct {
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+type semgrepResult struct {
+	CheckID string        `json:"check_id"`
+	Path    string        `json:"path"`
+	Start   semgrepPos    `json:"start"`
+	End     semgrepPos    `json:"end"`
+	Extra   semgrepExtra  `json:"extra"`
+}
+
+// AuditProjectSemgrep runs Semgrep (multi-language static analysis) on the given
+// path and returns findings. Falls back to the regex-based AuditProject if
+// Semgrep is not installed.
+func (s *SecurityAuditService) AuditProjectSemgrep(projectID, path string, agent string) (map[string]any, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("path does not exist: %s", absPath)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("not a directory: %s", absPath)
+	}
+
+	if _, err := exec.LookPath("semgrep"); err != nil {
+		// Fallback to regex-based scanner
+		return s.AuditProject(projectID, path, false, agent)
+	}
+
+	cmd := exec.Command("semgrep", "--json", "--no-rewrite-rule-ids", absPath)
+	output, err := cmd.Output()
+	if err != nil {
+		// Some semgrep rules return non-zero exit on findings; still try to parse
+		if output == nil {
+			return s.AuditProject(projectID, path, false, agent)
+		}
+	}
+
+	var raw struct {
+		Results []semgrepResult `json:"results"`
+	}
+	if err := json.Unmarshal(output, &raw); err != nil {
+		return s.AuditProject(projectID, path, false, agent)
+	}
+
+	var allFindings []Finding
+	for _, r := range raw.Results {
+		cwe := mapSemgrepToCWE(r.CheckID)
+		f := Finding{
+			CWE:        cwe,
+			Name:       r.CheckID,
+			File:       r.Path,
+			Line:       r.Start.Line,
+			Snippet:    r.Extra.Message,
+			Confidence: semgrepSeverityToConfidence(r.Extra.Severity),
+			Language:   detectLanguage(r.Path),
+		}
+		if f.Language == "unknown" {
+			f.Language = "multi"
+		}
+		allFindings = append(allFindings, f)
+	}
+
+	// Deduplicate by file:line
+	seen := make(map[string]bool)
+	var deduped []Finding
+	for _, f := range allFindings {
+		key := fmt.Sprintf("%s:%d:%s", f.File, f.Line, f.CWE)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		deduped = append(deduped, f)
+	}
+
+	sort.Slice(deduped, func(i, j int) bool {
+		if deduped[i].Confidence != deduped[j].Confidence {
+			return deduped[i].Confidence > deduped[j].Confidence
+		}
+		return deduped[i].File < deduped[j].File
+	})
+
+	topCWEs := computeTopCWEs(deduped, 10)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, finding := range deduped {
+		_, err := s.graph.UpsertNode("SecurityFinding", map[string]any{
+			"project_id": projectID,
+			"cwe":        finding.CWE,
+			"file":       finding.File,
+			"line":       finding.Line,
+		}, map[string]any{
+			"name":           finding.Name,
+			"snippet":        finding.Snippet,
+			"confidence":     finding.Confidence,
+			"language":       finding.Language,
+			"first_seen_at":  now,
+			"agent":          agent,
+			"parser_version": "semgrep-v1",
+		})
+		if err != nil {
+			continue
+		}
+	}
+
+	return map[string]any{
+		"project_id":     projectID,
+		"files_scanned":  -1,
+		"findings":       toFindingMaps(deduped),
+		"top_cwes":       topCWEs,
+		"parser_version": "semgrep-v1",
+		"sources":        []string{"semgrep"},
+		"created_at":     now,
+		"method":         "semgrep",
+	}, nil
+}
+
+// mapSemgrepToCWE maps Semgrep rule IDs to CWE IDs.
+// This is a best-effort mapping; many rules have no direct CWE.
+func mapSemgrepToCWE(checkID string) string {
+	lower := strings.ToLower(checkID)
+	switch {
+	case strings.Contains(lower, "sql-injection"):
+		return "CWE-89"
+	case strings.Contains(lower, "command-injection") || strings.Contains(lower, "command_injection"):
+		return "CWE-78"
+	case strings.Contains(lower, "xss") || strings.Contains(lower, "cross-site"):
+		return "CWE-79"
+	case strings.Contains(lower, "path-traversal") || strings.Contains(lower, "path_traversal"):
+		return "CWE-22"
+	case strings.Contains(lower, "hardcoded") || strings.Contains(lower, "secrets"):
+		return "CWE-798"
+	case strings.Contains(lower, "deserialization") || strings.Contains(lower, "pickle"):
+		return "CWE-502"
+	case strings.Contains(lower, "buffer") || strings.Contains(lower, "overflow"):
+		return "CWE-125"
+	case strings.Contains(lower, "csrf"):
+		return "CWE-352"
+	case strings.Contains(lower, "weak-hash") || strings.Contains(lower, "md5"):
+		return "CWE-327"
+	case strings.Contains(lower, "hardcoded-password") || strings.Contains(lower, "hardcoded_password"):
+		return "CWE-798"
+	default:
+		return "CWE-20"
+	}
+}
+
+func semgrepSeverityToConfidence(sev string) float64 {
+	switch strings.ToLower(sev) {
+	case "error":
+		return 0.9
+	case "warning":
+		return 0.6
+	case "info":
+		return 0.3
+	default:
+		return 0.5
+	}
 }

@@ -517,6 +517,98 @@ func (s *GitService) ReviewSuggestions(projectID string, files []string, limit i
 	return out
 }
 
+// Churn returns per-file change counts (commits, added, deleted lines)
+// sorted by total activity descending. Uses git log --numstat for accuracy.
+func (s *GitService) Churn(projectID, root string, limit int) (map[string]any, error) {
+	projects, err := s.graph.FindNodes("Project", map[string]any{"id": projectID})
+	if err == nil && len(projects) > 0 && root == "" {
+		if p, e := filepath.Abs(strProp(projects[0], "path")); e == nil {
+			root = p
+		}
+	}
+	if root == "" {
+		root = "."
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
+		return nil, &ServiceError{Message: "not a git repository"}
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+
+	out, err := git(root, "log", "--numstat", "--pretty=format:", "--", ".")
+	if err != nil {
+		return map[string]any{
+			"project_id": projectID,
+			"root":       root,
+			"file_count": 0,
+			"files":      []map[string]any{},
+		}, nil
+	}
+
+	type fileStats struct {
+		path    string
+		commits int
+		added   int
+		deleted int
+	}
+	stats := map[string]*fileStats{}
+	lines := strings.Split(out, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		// numstat lines look like: "10 5 path/to/file.go" or "10 5 - (binary)"
+		added, _ := strconv.Atoi(fields[0])
+		deleted, _ := strconv.Atoi(fields[1])
+		path := strings.Join(fields[2:], " ")
+		if path == "-" {
+			continue
+		}
+		// Normalize path
+		if idx := strings.Index(path, "/"); idx >= 0 {
+			path = strings.TrimPrefix(path, "")
+		}
+		fs, ok := stats[path]
+		if !ok {
+			fs = &fileStats{path: path}
+			stats[path] = fs
+		}
+		fs.commits++
+		fs.added += added
+		fs.deleted += deleted
+	}
+
+	var files []map[string]any
+	for _, fs := range stats {
+		files = append(files, map[string]any{
+			"path":       fs.path,
+			"commits":    fs.commits,
+			"added":      fs.added,
+			"deleted":    fs.deleted,
+			"total":      fs.added + fs.deleted,
+		})
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i]["total"].(int) > files[j]["total"].(int)
+	})
+	if len(files) > limit {
+		files = files[:limit]
+	}
+
+	return map[string]any{
+		"project_id":  projectID,
+		"root":        root,
+		"file_count":  len(files),
+		"files":       files,
+	}, nil
+}
+
 // suggestedReviewers blames the changed lines and returns the top authors
 // sorted by ownership of the code being changed.
 func (s *GitService) suggestedReviewers(root string, hunks map[string][]lineRange, wholeFiles map[string]bool, limit int) []map[string]any {

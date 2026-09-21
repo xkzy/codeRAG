@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"codergag/internal/services"
 )
@@ -36,6 +37,17 @@ func runRegisterInstructions(app *services.Application, args []string) int {
 		return 1
 	}
 	fmt.Fprintf(os.Stderr, "wrote %s\n", path)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "register-instructions:", err)
+		return 1
+	}
+	globalClaudeMD := home + "/.claude/CLAUDE.md"
+	if err := injectImportBlock(globalClaudeMD, path); err != nil {
+		fmt.Fprintln(os.Stderr, "register-instructions:", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "registered instructions in %s\n", globalClaudeMD)
 	fmt.Fprintln(os.Stderr, "register the MCP server in your agent config:")
 	fmt.Fprintln(os.Stderr, "  claude:   codergag serve")
 	fmt.Fprintln(os.Stderr, "  opencode: codergag serve")
@@ -44,6 +56,42 @@ func runRegisterInstructions(app *services.Application, args []string) int {
 		fmt.Fprintln(os.Stderr, "(applies to every agent that speaks MCP stdio)")
 	}
 	return 0
+}
+
+const claudeBegin = "<!-- codergag:instructions:begin -->"
+const claudeEnd = "<!-- codergag:instructions:end -->"
+
+// injectImportBlock idempotently injects an @-import line for the instructions
+// file into ~/.claude/CLAUDE.md using block markers, mirroring cctx's
+// registerGlobalInstructions.
+func injectImportBlock(claudeMD, instructionsPath string) error {
+	if err := os.MkdirAll(filepath.Dir(claudeMD), 0o755); err != nil {
+		return err
+	}
+	var existing string
+	if b, err := os.ReadFile(claudeMD); err == nil {
+		existing = string(b)
+	}
+	rel := instructionsPath
+	if home, err := os.UserHomeDir(); err == nil {
+		if strings.HasPrefix(instructionsPath, home) {
+			rel = strings.TrimPrefix(instructionsPath, home)
+			rel = strings.TrimPrefix(rel, "/")
+		}
+	}
+	block := claudeBegin + "\n@~/" + rel + "\n" + claudeEnd + "\n"
+	var next string
+	if idx := strings.Index(existing, claudeBegin); idx >= 0 {
+		end := strings.Index(existing[idx:], claudeEnd)
+		if end >= 0 {
+			next = existing[:idx] + block + existing[idx+end+len(claudeEnd):]
+		} else {
+			next = existing + block
+		}
+	} else {
+		next = block
+	}
+	return os.WriteFile(claudeMD, []byte(next), 0o644)
 }
 
 const instructionsMD = `# codeRAG instructions

@@ -68,11 +68,11 @@ func writeStatus(w io.Writer, st map[string]any) {
 				names = append(names, n)
 			}
 			sort.Slice(names, func(i, j int) bool {
-				return tools[names[i]].(map[string]any)["calls"].(int) > tools[names[j]].(map[string]any)["calls"].(int)
+				return toolInt(tools[names[i]], "calls") > toolInt(tools[names[j]], "calls")
 			})
 			for _, n := range names {
-				t := tools[n].(map[string]any)
-				fmt.Fprintf(w, "    %-22s %5v calls  %v errors  %v ms\n", n, t["calls"], t["errors"], t["avg_ms"])
+				t := tools[n]
+				fmt.Fprintf(w, "    %-22s %5v calls  %v errors  %v ms\n", n, toolInt(t, "calls"), toolInt(t, "errors"), toolFloat(t, "avg_ms"))
 			}
 		}
 	}
@@ -140,4 +140,39 @@ func orDash(v any) any {
 		return "-"
 	}
 	return v
+}
+
+func toolMap(v any) map[string]any {
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	return nil
+}
+
+func toolInt(v any, key string) int {
+	m := toolMap(v)
+	if m == nil {
+		return 0
+	}
+	switch n := m[key].(type) {
+	case int:
+		return n
+	case float64:
+		return int(n)
+	}
+	return 0
+}
+
+func toolFloat(v any, key string) float64 {
+	m := toolMap(v)
+	if m == nil {
+		return 0
+	}
+	switch n := m[key].(type) {
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	}
+	return 0
 }

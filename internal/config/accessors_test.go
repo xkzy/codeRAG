@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"testing"
 )
 
@@ -32,6 +33,9 @@ func TestConfigGetAllSupportedKeys(t *testing.T) {
 		"verification.enabled",
 		"verification.timeout_seconds",
 		"verification.max_output_bytes",
+		"security.auto_update",
+		"security.update_interval",
+		"security.pattern_source",
 	}
 	for _, k := range keys {
 		_, err := ConfigGet(cfg, k)
@@ -247,4 +251,13 @@ func TestLoadInvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
+}
+
+func writeConfig(t *testing.T, content, ext string) string {
+	t.Helper()
+	p := t.TempDir() + "/config" + ext
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

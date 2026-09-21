@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"codergag/internal/services"
@@ -78,16 +79,52 @@ func TestRunInjectWritesFile(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("inject returned %d, want 0", code)
 	}
-	if info, err := os.Stat(out); err != nil || info.Size() == 0 {
-		t.Fatalf("inject did not write %s: err=%v size=%d", out, err, size(info))
+	b, err := os.ReadFile(out)
+	if err != nil || len(b) == 0 {
+		t.Fatalf("inject did not write %s: err=%v", out, err)
 	}
 }
 
-func size(info os.FileInfo) int64 {
-	if info == nil {
-		return 0
+// TestRunInjectPreservesExistingContent verifies inject uses block markers to
+// merge into an existing CLAUDE.md without destroying prior content.
+func TestRunInjectPreservesExistingContent(t *testing.T) {
+	app := services.ApplicationInMemory()
+	defer app.Graph.Close()
+
+	if _, err := app.Graph.UpsertNode("Project", map[string]any{"id": "p1", "path": "."},
+		map[string]any{}); err != nil {
+		t.Fatal(err)
 	}
-	return info.Size()
+
+	out := filepath.Join(t.TempDir(), "CLAUDE.md")
+	if err := os.WriteFile(out, []byte("# My Project\n\nSome notes here.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code := runInject(app, []string{"--project", "p1", "--file", out})
+	if code != 0 {
+		t.Fatalf("inject returned %d, want 0", code)
+	}
+	b, _ := os.ReadFile(out)
+	content := string(b)
+	if !strings.Contains(content, "# My Project") {
+		t.Fatal("inject should preserve existing content")
+	}
+	if !strings.Contains(strings.ToLower(content), "codebase map") {
+		t.Fatal("inject should add its managed block")
+	}
+
+	// Run again — should be idempotent (no duplicate blocks).
+	code = runInject(app, []string{"--project", "p1", "--file", out})
+	if code != 0 {
+		t.Fatalf("second inject returned %d, want 0", code)
+	}
+	b2, _ := os.ReadFile(out)
+	content2 := string(b2)
+	occurrences := strings.Count(content2, "<!-- codergag:begin -->")
+	if occurrences != 1 {
+		t.Fatalf("expected 1 block marker, got %d", occurrences)
+	}
 }
 
 // TestRunRegisterWritesInstructions verifies register-instructions writes the
@@ -103,6 +140,46 @@ func TestRunRegisterWritesInstructions(t *testing.T) {
 	}
 	if info, err := os.Stat(out); err != nil || info.Size() == 0 {
 		t.Fatalf("register-instructions did not write %s: err=%v", out, err)
+	}
+}
+
+// TestRunRegisterInjectsCLAUDEMD verifies register-instructions injects an
+// @import block into ~/.claude/CLAUDE.md (mirroring cctx's behavior).
+func TestRunRegisterInjectsCLAUDEMD(t *testing.T) {
+	home := t.TempDir()
+	os.Setenv("HOME", home)
+	defer os.Unsetenv("HOME")
+
+	app := services.ApplicationInMemory()
+	defer app.Graph.Close()
+
+	out := filepath.Join(home, ".codergag", "instructions.md")
+	code := runRegisterInstructions(app, []string{"--file", out})
+	if code != 0 {
+		t.Fatalf("register-instructions returned %d, want 0", code)
+	}
+
+	claudeMD := filepath.Join(home, ".claude", "CLAUDE.md")
+	b, err := os.ReadFile(claudeMD)
+	if err != nil {
+		t.Fatalf("CLAUDE.md not written: %v", err)
+	}
+	content := string(b)
+	if !strings.Contains(content, "<!-- codergag:instructions:begin -->") {
+		t.Fatal("CLAUDE.md should contain codergag begin marker")
+	}
+	if !strings.Contains(content, "@~/.codergag/instructions.md") {
+		t.Fatal("CLAUDE.md should contain the @import line")
+	}
+
+	// Run again — should be idempotent (one block, not two).
+	code = runRegisterInstructions(app, []string{"--file", out})
+	if code != 0 {
+		t.Fatalf("second register-instructions returned %d, want 0", code)
+	}
+	b2, _ := os.ReadFile(claudeMD)
+	if strings.Count(string(b2), "<!-- codergag:instructions:begin -->") != 1 {
+		t.Fatal("CLAUDE.md should have exactly one block after re-run")
 	}
 }
 
@@ -152,7 +229,6 @@ func TestRunConfigGetSet(t *testing.T) {
 
 // TestRunUninstallNoOp returns 1 when there is nothing to remove.
 func TestRunUninstallNoOp(t *testing.T) {
-	// Point HOME at an empty temp dir so uninstall finds nothing.
 	home := t.TempDir()
 	os.Setenv("HOME", home)
 	defer os.Unsetenv("HOME")
@@ -162,6 +238,39 @@ func TestRunUninstallNoOp(t *testing.T) {
 	code := runUninstall([]string{})
 	if code != 1 {
 		t.Fatalf("uninstall returned %d, want 1 (nothing to remove)", code)
+	}
+}
+
+// TestRunUninstallCleansCLAUDEMD verifies uninstall removes the instructions
+// block from ~/.claude/CLAUDE.md that register-instructions created.
+func TestRunUninstallCleansCLAUDEMD(t *testing.T) {
+	home := t.TempDir()
+	os.Setenv("HOME", home)
+	defer os.Unsetenv("HOME")
+	os.Setenv("CODERAG_CONFIG", filepath.Join(home, "codergag.yaml"))
+	defer os.Unsetenv("CODERAG_CONFIG")
+
+	app := services.ApplicationInMemory()
+	defer app.Graph.Close()
+
+	// Register first (creates CLAUDE.md block + instructions file)
+	out := filepath.Join(home, ".codergag", "instructions.md")
+	if code := runRegisterInstructions(app, []string{"--file", out}); code != 0 {
+		t.Fatalf("register-instructions returned %d, want 0", code)
+	}
+	claudeMD := filepath.Join(home, ".claude", "CLAUDE.md")
+	if b, _ := os.ReadFile(claudeMD); !strings.Contains(string(b), "<!-- codergag:instructions:begin -->") {
+		t.Fatal("CLAUDE.md should have block before uninstall")
+	}
+
+	// Uninstall should remove both the file and the CLAUDE.md block
+	code := runUninstall([]string{})
+	if code != 0 {
+		t.Fatalf("uninstall returned %d, want 0", code)
+	}
+	// CLAUDE.md should be deleted (it only had the codergag block)
+	if _, err := os.Stat(claudeMD); !os.IsNotExist(err) {
+		t.Fatal("CLAUDE.md should be removed after uninstall")
 	}
 }
 
@@ -195,5 +304,84 @@ func TestRunIndexUnknownSubcommand(t *testing.T) {
 	code := runIndex(app, []string{"bogus"})
 	if code != 2 {
 		t.Fatalf("index bogus returned %d, want 2", code)
+	}
+}
+
+// TestRunSessionFlushBySessionID verifies flush only removes the named session.
+func TestRunSessionFlushBySessionID(t *testing.T) {
+	app := services.ApplicationInMemory()
+	defer app.Graph.Close()
+
+	for _, id := range []string{"sess-a", "sess-b", "sess-c"} {
+		if _, err := app.Graph.UpsertNode("UsageSession",
+			map[string]any{"project_id": services.SystemProject, "session_id": id},
+			map[string]any{"started_at": id, "usage": `{"x":1}`}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Flush only sess-b
+	code := runSession(app, []string{"flush", "--session-id", "sess-b", "--json"})
+	if code != 0 {
+		t.Fatalf("flush --session-id returned %d, want 0", code)
+	}
+	remaining, _ := app.Graph.FindNodes("UsageSession", map[string]any{"project_id": services.SystemProject})
+	for _, n := range remaining {
+		if services.StrProp(n, "session_id") == "sess-b" {
+			t.Fatal("sess-b should have been flushed")
+		}
+	}
+	if len(remaining) != 2 {
+		t.Fatalf("expected 2 remaining sessions, got %d", len(remaining))
+	}
+}
+
+// TestRunSessionExportMD verifies the --format md and --out flags work together.
+func TestRunSessionExportMD(t *testing.T) {
+	app := services.ApplicationInMemory()
+	defer app.Graph.Close()
+
+	if _, err := app.Graph.UpsertNode("UsageSession",
+		map[string]any{"project_id": services.SystemProject, "session_id": "test-session"},
+		map[string]any{"started_at": "test-session", "usage": `{"find_function":{"calls":5,"errors":1,"total_ms":250,"raw_tokens":100,"shaped_tokens":50}}`}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := filepath.Join(t.TempDir(), "export.md")
+	code := runSession(app, []string{"export", "--session-id", "test-session", "--format", "md", "--out", out})
+	if code != 0 {
+		t.Fatalf("export md returned %d, want 0", code)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(b)
+	if !strings.Contains(content, "codeRAG session test-session") {
+		t.Fatalf("export md missing session header: %s", content)
+	}
+	if !strings.Contains(content, "find_function") {
+		t.Fatal("export md should contain tool name")
+	}
+}
+
+// TestRunSessionExportJSONFormat verifies the default json output still works.
+func TestRunSessionExportJSONFormat(t *testing.T) {
+	app := services.ApplicationInMemory()
+	defer app.Graph.Close()
+
+	code := runSession(app, []string{"export"})
+	if code != 0 {
+		t.Fatalf("export json returned %d, want 0", code)
+	}
+}
+
+// TestRunSessionExportBadFormat returns 2 for unsupported formats.
+func TestRunSessionExportBadFormat(t *testing.T) {
+	app := services.ApplicationInMemory()
+	defer app.Graph.Close()
+
+	code := runSession(app, []string{"export", "--format", "yaml"})
+	if code != 2 {
+		t.Fatalf("export bad format returned %d, want 2", code)
 	}
 }

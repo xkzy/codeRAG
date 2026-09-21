@@ -22,6 +22,9 @@ func runSession(app *services.Application, args []string) int {
 		sub, args = args[0], args[1:]
 	}
 	asJSON := fs.Bool("json", false, "machine-readable output")
+	sessionID := fs.String("session-id", "", "filter to a single session id")
+	format := fs.String("format", "json", "export format: json|md")
+	outFile := fs.String("out", "", "write export to file (default stdout)")
 	fs.Parse(args)
 
 	defer app.Graph.Close()
@@ -33,14 +36,23 @@ func runSession(app *services.Application, args []string) int {
 			fmt.Fprintln(os.Stderr, "session:", err)
 			return 1
 		}
+		if *sessionID != "" {
+			filtered := sessions[:0]
+			for _, s := range sessions {
+				if services.StrProp(s, "session_id") == *sessionID {
+					filtered = append(filtered, s)
+				}
+			}
+			sessions = filtered
+		}
 		sort.SliceStable(sessions, func(i, j int) bool {
 			return services.StrProp(sessions[i], "started_at") > services.StrProp(sessions[j], "started_at")
 		})
 		out := make([]map[string]any, 0, len(sessions))
 		for _, s := range sessions {
 			out = append(out, map[string]any{
-				"session_id": s.Properties["session_id"],
-				"started_at": s.Properties["started_at"],
+				"session_id": services.StrProp(s, "session_id"),
+				"started_at": services.StrProp(s, "started_at"),
 				"calls":      len(services.DecodeUsage(services.StrProp(s, "usage"))),
 			})
 		}
@@ -54,7 +66,7 @@ func runSession(app *services.Application, args []string) int {
 		}
 		return 0
 	case "stats":
-		sum, err := services.SummarizeUsage(app.Graph)
+		sum, err := services.SummarizeUsageBySession(app.Graph, *sessionID)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "session:", err)
 			return 1
@@ -62,7 +74,11 @@ func runSession(app *services.Application, args []string) int {
 		if *asJSON {
 			cli.PrintJSON(os.Stdout, sum)
 		} else {
-			fmt.Fprintf(os.Stderr, "codeRAG usage stats\n")
+			label := "codeRAG usage stats (all sessions)"
+			if *sessionID != "" {
+				label = "codeRAG usage stats (session " + *sessionID + ")"
+			}
+			fmt.Fprintf(os.Stderr, "%s\n", label)
 			fmt.Fprintf(os.Stderr, "  sessions   %d\n", sum.Sessions)
 			fmt.Fprintf(os.Stderr, "  tool calls %d\n", sum.Total.Calls)
 			fmt.Fprintf(os.Stderr, "  errors     %d (%.2f%%)\n", sum.Total.Errors, errorRate(sum.Total))
@@ -83,9 +99,12 @@ func runSession(app *services.Application, args []string) int {
 			fmt.Fprintln(os.Stderr, "session:", err)
 			return 1
 		}
-		ids := make([]string, len(n))
-		for i, nd := range n {
-			ids[i] = nd.ID
+		var ids []string
+		for _, nd := range n {
+			if *sessionID != "" && services.StrProp(nd, "session_id") != *sessionID {
+				continue
+			}
+			ids = append(ids, nd.ID)
 		}
 		removed := 0
 		if len(ids) > 0 {
@@ -98,25 +117,46 @@ func runSession(app *services.Application, args []string) int {
 		if *asJSON {
 			cli.PrintJSON(os.Stdout, map[string]any{"flushed": removed})
 		} else {
-			fmt.Fprintf(os.Stderr, "flushed %d usage sessions\n", removed)
+			if *sessionID != "" {
+				fmt.Fprintf(os.Stderr, "flushed %d usage sessions for %s\n", removed, *sessionID)
+			} else {
+				fmt.Fprintf(os.Stderr, "flushed %d usage sessions\n", removed)
+			}
 		}
 		return 0
 	case "export":
-		sum, err := services.SummarizeUsage(app.Graph)
+		sum, err := services.SummarizeUsageBySession(app.Graph, *sessionID)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "session:", err)
 			return 1
 		}
-		blob, err := json.Marshal(map[string]any{"summary": sum})
+		var blob []byte
+		switch *format {
+		case "json":
+			blob, err = json.Marshal(map[string]any{"summary": sum})
+		case "md":
+			blob = []byte(formatSummaryMD(sum, *sessionID))
+		default:
+			fmt.Fprintf(os.Stderr, "unknown format %q (use json or md)\n", *format)
+			return 2
+		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "session:", err)
 			return 1
+		}
+		if *outFile != "" {
+			if err := os.WriteFile(*outFile, blob, 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, "session:", err)
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "exported session to %s\n", *outFile)
+			return 0
 		}
 		fmt.Print(string(blob))
 		return 0
 	default:
 		fmt.Fprintf(os.Stderr, "unknown session subcommand %q\n\n", sub)
-		fmt.Fprintln(os.Stderr, "Usage: codergag session [list|stats|flush|export] [--json]")
+		fmt.Fprintln(os.Stderr, "Usage: codergag session [list|stats|flush|export] [--json] [--session-id ID] [--format json|md] [--out FILE]")
 		return 2
 	}
 }
@@ -140,4 +180,27 @@ func tokenSavingsPct(s services.UsageSummary) float64 {
 		return 0
 	}
 	return 100 * float64(s.TokensSaved()) / float64(s.Total.RawTokens)
+}
+
+// formatSummaryMD renders a usage summary as a human-readable markdown report.
+func formatSummaryMD(s services.UsageSummary, sessionID string) string {
+	var sb strings.Builder
+	if sessionID != "" {
+		fmt.Fprintf(&sb, "## codeRAG session %s\n\n", sessionID)
+	} else {
+		sb.WriteString("## codeRAG usage summary\n\n")
+	}
+	fmt.Fprintf(&sb, "| Metric | Value |\n|---|---|\n")
+	fmt.Fprintf(&sb, "| Sessions | %d |\n", s.Sessions)
+	fmt.Fprintf(&sb, "| Tool calls | %d |\n", s.Total.Calls)
+	fmt.Fprintf(&sb, "| Errors | %d |\n", s.Total.Errors)
+	fmt.Fprintf(&sb, "| Avg ms/call | %.1f |\n", avgMs(s.Total))
+	fmt.Fprintf(&sb, "| Tokens returned | %d |\n", s.Total.ShapedTokens)
+	fmt.Fprintf(&sb, "| Tokens saved | %d |\n", s.TokensSaved())
+	sb.WriteString("\n### By tool\n\n| Tool | Calls | Errors | Avg ms |\n|---|---|---|---|\n")
+	for _, n := range s.TopTools(15) {
+		u := s.ByTool[n]
+		fmt.Fprintf(&sb, "| %s | %d | %d | %.1f |\n", n, u.Calls, u.Errors, avgMs(*u))
+	}
+	return sb.String()
 }

@@ -64,7 +64,7 @@ func TestNoArbitrarySQLTool(t *testing.T) {
 	for _, d := range reg.Definitions() {
 		names[d.Name] = true
 	}
-	for _, want := range []string{"index_repository", "get_callers", "impact_analysis", "record_re_hypothesis", "analyze_complexity", "memory_store"} {
+	for _, want := range []string{"index_repository", "get_callers", "impact_analysis", "record_re_hypothesis", "analyze_complexity", "memory_store", "export_table", "export_graph", "git_churn", "query_table", "get_table_schema"} {
 		if !names[want] {
 			t.Errorf("missing tool %s", want)
 		}

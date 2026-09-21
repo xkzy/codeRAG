@@ -40,10 +40,6 @@ jobs:
           CGO_ENABLED: "1"
         run: |
           go mod download
-          # Ensure mongo driver is resolved on macOS (sometimes fails silently)
-          if [ "${{ matrix.goos }}" = darwin ]; then
-            go get go.mongodb.org/mongo-driver@latest
-          fi
           if [ "${{ matrix.goos }}" = linux ]; then
             export CC=musl-gcc
             go build -trimpath -ldflags '-s -w -linkmode external -extldflags "-static" -X main.Version=${{ github.ref_name }}' -o codergag ./cmd/codergag

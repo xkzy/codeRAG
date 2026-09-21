@@ -301,6 +301,11 @@ func (r *ToolRegistry) registerAll() {
 		"hypothesis": map[string]any{"type": "object", "description": "Hypothesis (id, subject_id, claim, confidence, status, analyst, evidence_for, evidence_against)."},
 	}), append(requiredBase, "hypothesis"), r.handleRecordHypothesis)
 
+	r.register("check_interception", "Reverse engineering: auto-intercepts LLM loops and hallucinations by checking hypotheses/evidence for contradictions and repetition. Use after recording hypotheses or evidence to verify analysis integrity.", baseProps(map[string]any{
+		"project_id":  map[string]any{"type": "string", "description": "Project ID."},
+		"subject_id":  map[string]any{"type": "string", "description": "Subject node ID to check."},
+	}), append(requiredBase, "project_id", "subject_id"), r.handleCheckInterception)
+
 	r.register("record_behavioral_equivalence", "Reverse engineering: record behavioral equivalence comparison result", baseProps(map[string]any{
 		"equivalence": map[string]any{"type": "object", "description": "Equivalence (binary_function_id, source_function_id, equivalence_status, confidence, method, analyst, test_cases, differences)."},
 	}), append(requiredBase, "equivalence"), r.handleRecordBehavioralEquivalence)
@@ -417,7 +422,7 @@ func (r *ToolRegistry) registerAll() {
 		"path": map[string]any{"type": "string", "description": "Markdown file path."},
 	}), append(requiredBase, "path"), r.handleIndexMarkdown)
 
-	r.register("index_document", "Load a PDF, DOC, DOCX, or text document into the graph so LLMs can reference it", baseProps(map[string]any{
+	r.register("index_document", "Load a PDF, DOC, DOCX, CSV, TSV, XLSX, or text document into the graph so LLMs can reference it", baseProps(map[string]any{
 		"path": map[string]any{"type": "string", "description": "Document path to load."},
 	}), append(requiredBase, "path"), r.handleIndexDocument)
 
@@ -431,6 +436,33 @@ func (r *ToolRegistry) registerAll() {
 	r.register("remove_doc_source", "CodeGraph semantic operation: remove doc source", baseProps(map[string]any{
 		"document_id": map[string]any{"type": "string", "description": "Document ID to remove."},
 	}), append(requiredBase, "document_id"), r.handleRemoveDocSource)
+
+	r.register("get_table_schema", "Tables: get column names and row count for a CSV/TSV/XLSX document", baseProps(map[string]any{
+		"document_id": map[string]any{"type": "string", "description": "Document ID of a tabular document."},
+	}), append(requiredBase, "document_id"), r.handleGetTableSchema)
+
+	r.register("query_table", "Tables: query rows from a CSV/TSV/XLSX document by column filter", baseProps(map[string]any{
+		"document_id": map[string]any{"type": "string", "description": "Document ID of a tabular document."},
+		"filter_column": map[string]any{"type": "string", "description": "Column to filter on (optional, skip for all rows)."},
+		"filter_value": map[string]any{"type": "string", "description": "Value to match in the filter column."},
+		"limit": map[string]any{"type": "integer", "description": "Maximum rows to return."},
+	}), append(requiredBase, "document_id"), r.handleQueryTable)
+
+	r.register("export_table", "Tables: export query results to CSV", baseProps(map[string]any{
+		"document_id":   map[string]any{"type": "string", "description": "Document ID of a tabular document."},
+		"filter_column": map[string]any{"type": "string", "description": "Column to filter on (optional)."},
+		"filter_value":  map[string]any{"type": "string", "description": "Value to match in the filter column."},
+		"limit":         map[string]any{"type": "integer", "description": "Maximum rows to export."},
+	}), append(requiredBase, "document_id"), r.handleExportTable)
+
+	r.register("export_graph", "Export the current project graph (nodes + edges) as JSON", baseProps(map[string]any{
+		"limit": map[string]any{"type": "integer", "description": "Maximum nodes/edges to export (default 1000)."},
+	}), requiredBase, r.handleExportGraph)
+
+	r.register("git_churn", "Git: analyze code churn across files in a project", baseProps(map[string]any{
+		"path":  map[string]any{"type": "string", "description": "Repository path to analyze (defaults to project root)."},
+		"limit": map[string]any{"type": "integer", "description": "Maximum files to return (default 50)."},
+	}), requiredBase, r.handleGitChurn)
 
 	r.register("verify_design", "CodeGraph semantic operation: verify design", baseProps(map[string]any{
 		"document_id": map[string]any{"type": "string", "description": "Document ID."},
@@ -460,6 +492,17 @@ func (r *ToolRegistry) registerAll() {
 		"cache": map[string]any{"type": "boolean", "description": "Use cache to skip re-scan."},
 		"agent": map[string]any{"type": "string", "description": "Agent performing the audit."},
 	}), append(requiredBase, "path"), r.handleAuditSecurity)
+
+	r.register("audit_security_semgrep", "Security: run Semgrep multi-language static analysis (30+ languages). Falls back to regex patterns if Semgrep is not installed.", baseProps(map[string]any{
+		"path":  map[string]any{"type": "string", "description": "Project root to audit."},
+		"agent": map[string]any{"type": "string", "description": "Agent performing the audit."},
+	}), append(requiredBase, "path"), r.handleAuditSecuritySemgrep)
+
+	r.register("update_security_patterns", "Security: fetch latest vulnerability patterns from the online pattern database (independent of codeRAG releases)", baseProps(map[string]any{
+	}), requiredBase, r.handleUpdateSecurityPatterns)
+
+	r.register("pattern_update_status", "Security: check security pattern update status and last fetch time", baseProps(map[string]any{
+	}), requiredBase, r.handlePatternUpdateStatus)
 
 	r.register("find_vulnerabilities", "Security: find findings by CWE", baseProps(map[string]any{
 		"cwe":   map[string]any{"type": "string", "description": "CWE identifier (e.g. CWE-78)."},
@@ -648,6 +691,16 @@ func (r *ToolRegistry) registerAll() {
 		"allowed_paths":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 		"forbidden_paths":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 	}), requiredBase, r.handlePrivacyPolicy)
+
+	r.register("classify_task", "LLM: determine if a task is simple enough for a small model", baseProps(map[string]any{
+		"project_id": map[string]any{"type": "string", "description": "Project ID."},
+		"task":       map[string]any{"type": "string", "description": "Task description to classify."},
+	}), append(requiredBase, "task"), r.handleClassifyTask)
+
+	r.register("small_ask", "LLM: send a simple query to a small model (e.g., phi3, gemma2 via Ollama)", baseProps(map[string]any{
+		"project_id": map[string]any{"type": "string", "description": "Project ID."},
+		"query":      map[string]any{"type": "string", "description": "Simple query to send to the small model."},
+	}), append(requiredBase, "query"), r.handleSmallAsk)
 }
 
 // paginatedTools return a single ranked or filtered list and accept offset/limit.

@@ -108,6 +108,16 @@ func decodeUsage(blob string) map[string]*ToolUsage {
 
 // SummarizeUsage adds up rolled-up totals and live sessions.
 func SummarizeUsage(g graph.GraphRepository) (UsageSummary, error) {
+	return summarizeUsage(g, "")
+}
+
+// SummarizeUsageBySession returns the aggregate usage for a single session.
+// When sessionID is empty, all sessions are included (same as SummarizeUsage).
+func SummarizeUsageBySession(g graph.GraphRepository, sessionID string) (UsageSummary, error) {
+	return summarizeUsage(g, sessionID)
+}
+
+func summarizeUsage(g graph.GraphRepository, sessionID string) (UsageSummary, error) {
 	sum := UsageSummary{ByTool: map[string]*ToolUsage{}}
 	for _, kind := range []string{"UsageTotal", "UsageSession"} {
 		nodes, err := g.FindNodes(kind, map[string]any{"project_id": systemProject})
@@ -115,6 +125,11 @@ func SummarizeUsage(g graph.GraphRepository) (UsageSummary, error) {
 			return sum, err
 		}
 		for _, n := range nodes {
+			if sessionID != "" {
+				if n.Properties["session_id"] != sessionID {
+					continue
+				}
+			}
 			if kind == "UsageSession" {
 				sum.Sessions++
 			}

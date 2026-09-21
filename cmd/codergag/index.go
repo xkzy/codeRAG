@@ -20,6 +20,8 @@ func runIndex(app *services.Application, args []string) int {
 		sub, args = args[0], args[1:]
 	}
 	incremental := fs.Bool("incremental", true, "skip unchanged files")
+	force := fs.Bool("force", false, "re-index all files even if unchanged")
+	path := fs.String("path", "", "project path (defaults to current directory or first positional arg)")
 	ignore := fs.String("ignore", ".git,build,node_modules", "comma-separated ignore list")
 	skipGraphify := fs.Bool("skip-graphify", false, "skip the graphify community pass")
 	fs.Parse(args)
@@ -29,12 +31,18 @@ func runIndex(app *services.Application, args []string) int {
 	switch sub {
 	case "run":
 		root := "."
-		if fs.NArg() > 0 {
+		if *path != "" {
+			root = *path
+		} else if fs.NArg() > 0 {
 			root = fs.Arg(0)
 		}
 		pid := services.StableProjectID(root)
 		ign := splitList(*ignore)
-		res, err := app.Index.IndexRepository(pid, root, *incremental, ign, *skipGraphify)
+		incr := *incremental
+		if *force {
+			incr = false
+		}
+		res, err := app.Index.IndexRepository(pid, root, incr, ign, *skipGraphify)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "index:", err)
 			return 1

@@ -22,6 +22,10 @@ func runWatch(app *services.Application, args []string) int {
 		}
 		interval = d
 	}
+	if app.Daemon == nil {
+		fmt.Fprintln(os.Stderr, "watch: daemon not configured (enable watch in config)")
+		return 1
+	}
 	app.Daemon.Start()
 
 	sig := make(chan os.Signal, 1)

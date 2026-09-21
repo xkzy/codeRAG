@@ -1,0 +1,2 @@
+package command-line-arguments
+	/tmp/export_patterns.go:6:2: use of internal package codergag/internal/security not allowed

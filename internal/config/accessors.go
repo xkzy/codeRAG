@@ -60,6 +60,12 @@ func ConfigGet(cfg Config, key string) (string, error) {
 		return strconv.Itoa(cfg.Verification.TimeoutSeconds), nil
 	case "verification.max_output_bytes":
 		return strconv.Itoa(cfg.Verification.MaxOutputBytes), nil
+	case "security.auto_update":
+		return strconv.FormatBool(cfg.Security.AutoUpdate), nil
+	case "security.update_interval":
+		return cfg.Security.UpdateInterval, nil
+	case "security.pattern_source":
+		return cfg.Security.PatternSource, nil
 	default:
 		return "", fmt.Errorf("unknown config key %q", key)
 	}
@@ -147,6 +153,16 @@ func ConfigSet(cfg *Config, key, value string) error {
 		return setInt(&cfg.Verification.TimeoutSeconds, value)
 	case "verification.max_output_bytes":
 		return setInt(&cfg.Verification.MaxOutputBytes, value)
+	case "security.auto_update":
+		v, err := strconv.ParseBool(value)
+		if err != nil {
+			return err
+		}
+		cfg.Security.AutoUpdate = v
+	case "security.update_interval":
+		cfg.Security.UpdateInterval = value
+	case "security.pattern_source":
+		cfg.Security.PatternSource = value
 	default:
 		return fmt.Errorf("unknown config key %q", key)
 	}

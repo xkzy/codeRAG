@@ -117,7 +117,7 @@ func ApplicationFromConfig(cfg *config.Config) (*Application, error) {
 		if dsn == "" {
 			dsn = buildPostgresDSN(cfg.Database)
 		}
-		repo, err := graph.NewSQLGraphRepository(context.Background(), dsn)
+		repo, err := newSQLGraphRepository(context.Background(), dsn)
 		if err != nil {
 			return nil, err
 		}
@@ -128,7 +128,7 @@ func ApplicationFromConfig(cfg *config.Config) (*Application, error) {
 		if dsn == "" {
 			dsn = buildMongoDSN(cfg.Database)
 		}
-		repo, err := graph.NewMongoGraphRepository(context.Background(), dsn, cfg.Projects[0].ID)
+		repo, err := newMongoGraphRepository(context.Background(), dsn, cfg.Projects[0].ID)
 		if err != nil {
 			return nil, err
 		}
@@ -189,41 +189,6 @@ func ApplicationFromConfig(cfg *config.Config) (*Application, error) {
 	au.Start()
 
 	return app, nil
-}
-
-func buildPostgresDSN(cfg config.DatabaseConfig) string {
-	if cfg.DSN != "" {
-		return cfg.DSN
-	}
-	password := cfg.Password
-	if password != "" {
-		password = ":" + password + "@"
-	}
-	port := cfg.Port
-	if port == 0 {
-		port = 5432
-	}
-	return fmt.Sprintf("postgres://%s%s@%s:%d/%s?sslmode=disable",
-		cfg.User, password, cfg.Host, port, cfg.Database)
-}
-
-func buildMongoDSN(cfg config.DatabaseConfig) string {
-	if cfg.DSN != "" {
-		return cfg.DSN
-	}
-	port := cfg.Port
-	if port == 0 {
-		port = 27017
-	}
-	auth := ""
-	if cfg.User != "" {
-		auth = cfg.User
-		if cfg.Password != "" {
-			auth += ":" + cfg.Password
-		}
-		auth += "@"
-	}
-	return fmt.Sprintf("mongodb://%s%s:%d/%s", auth, cfg.Host, port, cfg.Database)
 }
 
 func daemonConfigFromConfig(cfg config.Config) DaemonConfig {

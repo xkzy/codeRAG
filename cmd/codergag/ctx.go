@@ -80,6 +80,10 @@ func ctxRun(app *services.Application, args []string, stdin io.Reader, stdout, s
 		if err := fs.Parse(rest); err != nil {
 			return 2
 		}
+		if *kind != "decision" && *kind != "convention" && *kind != "task" && *kind != "note" {
+			fmt.Fprintf(stderr, "ctx add: invalid -kind %q (use decision|convention|task|note)\n", *kind)
+			return 2
+		}
 		body := strings.Join(fs.Args(), " ")
 		if body == "" {
 			if b, err := io.ReadAll(stdin); err == nil {

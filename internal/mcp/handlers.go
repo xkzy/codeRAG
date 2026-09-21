@@ -1,8 +1,10 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"codergag/internal/persona"
 	"codergag/internal/privacy"
 	"codergag/internal/reverse"
+	"codergag/internal/security"
 	"codergag/internal/services"
 )
 
@@ -475,6 +478,19 @@ func (r *ToolRegistry) handleRecordObservation(args map[string]any) (map[string]
 		getString(args, "description"), opts)
 }
 
+func (r *ToolRegistry) handleCheckInterception(args map[string]any) (map[string]any, error) {
+	res, err := r.app.AntiLoop.CheckInterception(getString(args, "project_id"), getString(args, "subject_id"))
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"loop_detected":      res.LoopDetected,
+		"hallucination_risk": res.HallucinationRisk,
+		"issues":             res.Issues,
+		"recommendations":    res.Recommendations,
+	}, nil
+}
+
 func (r *ToolRegistry) handleRecordRuntimeTrace(args map[string]any) (map[string]any, error) {
 	raw, _ := args["trace"].(map[string]any)
 	if raw == nil {
@@ -795,6 +811,131 @@ func (r *ToolRegistry) handleRemoveDocSource(args map[string]any) (map[string]an
 	return r.app.Documents.RemoveSource(getString(args, "project_id"), getString(args, "document_id"))
 }
 
+func (r *ToolRegistry) handleGetTableSchema(args map[string]any) (map[string]any, error) {
+	return r.app.Documents.GetTableSchema(getString(args, "project_id"), getString(args, "document_id"))
+}
+
+func (r *ToolRegistry) handleQueryTable(args map[string]any) (map[string]any, error) {
+	projectID := getString(args, "project_id")
+	documentID := getString(args, "document_id")
+	filterCol := getString(args, "filter_column")
+	filterVal := getString(args, "filter_value")
+	limit := getInt(args, "limit", 100)
+
+	results, err := r.app.Documents.QueryTable(projectID, documentID, filterCol, filterVal, limit)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"rows": results, "count": len(results)}, nil
+}
+
+func (r *ToolRegistry) handleExportTable(args map[string]any) (map[string]any, error) {
+	projectID := getString(args, "project_id")
+	documentID := getString(args, "document_id")
+	filterCol := getString(args, "filter_column")
+	filterVal := getString(args, "filter_value")
+	limit := getInt(args, "limit", 1000)
+
+	results, err := r.app.Documents.QueryTable(projectID, documentID, filterCol, filterVal, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(results) == 0 {
+		return map[string]any{"csv": "", "count": 0}, nil
+	}
+
+	// Collect all column names
+	colSet := make(map[string]bool)
+	for _, row := range results {
+		for k := range row {
+			colSet[k] = true
+		}
+	}
+	var cols []string
+	for c := range colSet {
+		cols = append(cols, c)
+	}
+	sort.Strings(cols)
+
+	// Build CSV
+	var sb strings.Builder
+	sb.WriteString(strings.Join(cols, ","))
+	sb.WriteString("\n")
+	for _, row := range results {
+		for i, col := range cols {
+			if i > 0 {
+				sb.WriteString(",")
+			}
+			val := row[col]
+			if val == nil {
+				sb.WriteString("")
+			} else {
+				s := fmt.Sprintf("%v", val)
+				if strings.Contains(s, ",") || strings.Contains(s, "\"") || strings.Contains(s, "\n") {
+					s = "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\""
+				}
+				sb.WriteString(s)
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	return map[string]any{
+		"csv":     sb.String(),
+		"columns": cols,
+		"count":   len(results),
+	}, nil
+}
+
+func (r *ToolRegistry) handleExportGraph(args map[string]any) (map[string]any, error) {
+	projectID := getString(args, "project_id")
+	limit := getInt(args, "limit", 1000)
+
+	// Export nodes
+	nodes := []string{"Function", "Struct", "Class", "Table", "TableSchema", "TableRows", "Document", "DocumentSection"}
+	var allNodes []map[string]any
+	for _, kind := range nodes {
+		nodeList, err := r.application().Graph.FindNodes(kind, map[string]any{"project_id": projectID})
+		if err != nil {
+			continue
+		}
+		for _, n := range nodeList {
+			if len(allNodes) >= limit {
+				break
+			}
+			row := map[string]any{"id": n.ID, "kind": n.Kind}
+			for k, v := range n.Properties {
+				row[k] = v
+			}
+			allNodes = append(allNodes, row)
+		}
+	}
+
+	return map[string]any{
+		"project_id": projectID,
+		"node_count": len(allNodes),
+		"nodes":      allNodes,
+	}, nil
+}
+
+func (r *ToolRegistry) handleGitChurn(args map[string]any) (map[string]any, error) {
+	projectID := getString(args, "project_id")
+	path := getString(args, "path")
+	if path == "" {
+		// Resolve project path
+		projects, _ := r.application().Graph.FindNodes("Project", map[string]any{"id": projectID})
+		if len(projects) > 0 {
+			path = projects[0].Properties["path"].(string)
+		} else {
+			path = "."
+		}
+	}
+	limit := limitOf(args)
+
+	return r.application().Git.Churn(projectID, path, limit)
+}
+
 func (r *ToolRegistry) handleVerifyDesign(args map[string]any) (map[string]any, error) {
 	return r.app.Documents.VerifyDesign(getString(args, "project_id"), getString(args, "document_id"))
 }
@@ -821,6 +962,39 @@ func (r *ToolRegistry) handleReviewSuggestions(args map[string]any) (map[string]
 func (r *ToolRegistry) handleAuditSecurity(args map[string]any) (map[string]any, error) {
 	return r.app.Security.AuditProject(getString(args, "project_id"), getString(args, "path"),
 		getBool(args, "cache", false), getString(args, "agent"))
+}
+
+func (r *ToolRegistry) handleAuditSecuritySemgrep(args map[string]any) (map[string]any, error) {
+	return r.app.Security.AuditProjectSemgrep(getString(args, "project_id"), getString(args, "path"),
+		getString(args, "agent"))
+}
+
+func (r *ToolRegistry) handleUpdateSecurityPatterns(args map[string]any) (map[string]any, error) {
+	count, err := security.UpdatePatternsOnline()
+	if err != nil {
+		return map[string]any{
+			"updated": false,
+			"error":   err.Error(),
+		}, nil
+	}
+	return map[string]any{
+		"updated":      true,
+		"pattern_count": count,
+		"updated_at":    security.PatternsUpdateTime().Format(time.RFC3339),
+		"source":       security.PatternSource,
+	}, nil
+}
+
+func (r *ToolRegistry) handlePatternUpdateStatus(args map[string]any) (map[string]any, error) {
+	lastUpdate := security.PatternsUpdateTime()
+	return map[string]any{
+		"pattern_count":  len(security.Patterns),
+		"last_updated":    lastUpdate.Format(time.RFC3339),
+		"up_to_date":      !security.ShouldUpdate(),
+		"next_update_due": lastUpdate.Add(security.PatternUpdateInterval).Format(time.RFC3339),
+		"source":         security.PatternSource,
+		"auto_update":    !lastUpdate.IsZero() || !security.ShouldUpdate(),
+	}, nil
 }
 
 func (r *ToolRegistry) handleFindVulnerabilities(args map[string]any) (map[string]any, error) {
@@ -1287,4 +1461,43 @@ func (r *ToolRegistry) handlePrivacyPolicy(args map[string]any) (map[string]any,
 func (r *ToolRegistry) handleListLanguages(args map[string]any) (map[string]any, error) {
 	langs := services.SupportedLanguages()
 	return map[string]any{"count": len(langs), "languages": langs}, nil
+}
+
+func (r *ToolRegistry) handleClassifyTask(args map[string]any) (map[string]any, error) {
+	projectID := getString(args, "project_id")
+	task := getString(args, "task")
+
+	app := r.application()
+	if app.SmallModel == nil {
+		return map[string]any{"enabled": false, "can_offload": false, "reason": "small model not configured"}, nil
+	}
+
+	return app.SmallModel.SuggestSmallModel(projectID, task)
+}
+
+func (r *ToolRegistry) handleSmallAsk(args map[string]any) (map[string]any, error) {
+	projectID := getString(args, "project_id")
+	query := getString(args, "query")
+
+	app := r.application()
+	if app.SmallModel == nil || !app.SmallModel.Enabled() {
+		return nil, fmt.Errorf("small model offloading is not enabled")
+	}
+
+	result, err := app.SmallModel.SmallAsk(context.Background(), query)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"project_id": projectID,
+		"provider":   app.SmallModel.Config().Provider,
+		"model":      app.SmallModel.Config().Model,
+		"response":   result,
+	}, nil
+}
+
+func (r *ToolRegistry) smallModelService() *services.SmallModelService {
+	app := r.application()
+	return app.SmallModel
 }
