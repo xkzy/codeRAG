@@ -45,6 +45,10 @@ Cache tools include `cache_lookup`, `cache_store`, `cache_invalidate`, `cache_st
 
 Search tools include `search_code_graph` (BM25 keyword) and `search_semantic` (BM25 + vector fusion via reciprocal rank fusion). Indexing exposes `index_repository`, `index_file`, `index_files`, and `index_progress` so a long-running index pass can be reported across agent turns.
 
+Security tools include `audit_security` (CWE-based vulnerability scan) and `audit_security_semgrep` (multi-language Semgrep integration).
+
+Self-update: `codergag update [--check] [--force]` — check for and install updates from GitHub releases. Automatic background checks run every 24h when serving.
+
 Responses are bounded and include provenance, evidence, and confidence where available. `query_graph` is an expert-only guarded read-only query and requires a project predicate. The server exposes no arbitrary shell, debugger, network, privilege, or destructive-file tool.
 
 ## Context records and hooks
@@ -61,6 +65,20 @@ codergag ctx reset -yes
 ```
 
 `codergag setup --hooks` registers Claude Code hooks (`SessionStart`, `UserPromptSubmit`) that inject a token-budgeted digest: pinned records, decisions, and the records relevant to each prompt. Budgets are `context.session_budget` (default 1500) and `context.prompt_budget` (default 500) tokens. `codergag uninstall` removes only the hooks it added.
+
+## Self-Update
+
+```bash
+codergag update --check     # Check for updates only
+codergag update             # Interactive update
+codergag update --force     # Non-interactive (CI)
+```
+
+- Checks GitHub releases at `github.com/kilocode-org/codergag`
+- Downloads platform-specific asset (tar.gz for Linux/macOS)
+- Atomic binary replacement with backup
+- Background auto-check every 24h during `codergag serve`
+- Notifies on stderr when update available
 
 ## Data and safety model
 

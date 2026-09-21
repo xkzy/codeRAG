@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="1.3.0"
+VERSION="1.4.0"
 REPO="xkzy/codeRAG"
 INSTALL_DIR="${HOME}/.codergag"
 CONFIG_DIR="${HOME}/.config/codergag"
@@ -446,6 +446,7 @@ main() {
     echo "  1. Restart your shell or run: source ~/.bashrc (or ~/.zshrc)"
     echo "  2. Index a project: codergag serve (in another terminal) then use index_repository tool"
     echo "  3. Run evaluation: codergag eval -project <id>"
+    echo "  4. Check for updates: codergag update --check"
     echo ""
     echo "Config: ${CONFIG_DIR}/config.yaml"
     echo "Binary: ${BIN_DIR}/codergag"

@@ -2,6 +2,36 @@
 
 All notable changes to codeRAG are documented here.
 
+## [v1.4.0] — 2026-09-21
+
+### New Features
+
+#### Self-Update from GitHub Releases
+- `codergag update [--check] [--force]` — check for and install updates from GitHub releases
+- `codergag update --check` — check only, don't install
+- `codergag update --force` — non-interactive install (CI-friendly)
+- Automatic background update checks every 24h when running `codergag serve`
+- Notifies on stderr when update available; runs `codergag update` to install
+
+#### Security Fixes
+- Removed hardcoded `admin/admin` default database credentials (CWE-798 fix)
+- Default config now uses empty User/Password; requires explicit configuration
+
+#### CI/CD Skill
+- New `ci-cd` skill with GitHub Actions release pipeline template
+- Self-update and auto-update documentation
+- Multi-platform build patterns (Linux musl static, macOS, ARM64)
+
+### Improvements
+- Version embedded at build time via `-X main.Version=${{ github.ref_name }}`
+- Release workflow generates SHA256SUMS for binary verification
+- Installer updated to v1.4.0 with update command in next steps
+
+### Configuration
+- New `version` field in config (auto-populated from build ldflags)
+
+---
+
 ## [v1.2.0] — 2026-09-21
 
 ### New Features
