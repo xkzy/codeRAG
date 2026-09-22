@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -132,6 +133,28 @@ func (g *Graphify) Run() (*Graph, error) {
 		return nil, err
 	}
 	return graph, nil
+}
+
+// RunAsync starts graphify in a background goroutine and returns immediately.
+// Use globalProgress.Snapshot() to check live status or WaitForAsync() to block until done.
+func (g *Graphify) RunAsync() {
+	go func() {
+		_, _ = g.Run()
+	}()
+}
+
+// WaitForAsync blocks until an async graphify run completes.
+func (g *Graphify) WaitForAsync() error {
+	for {
+		snap := globalProgress.Snapshot()
+		if snap.Done {
+			if snap.Error != "" {
+				return errors.New(snap.Error)
+			}
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func (g *Graphify) extract() (*Graph, error) {

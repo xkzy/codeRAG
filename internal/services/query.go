@@ -115,6 +115,20 @@ func (s *CodeGraphService) Find(projectID, kind, query string, limit int) ([]map
 	if limit <= 0 {
 		limit = 20
 	}
+	low := strings.ToLower(query)
+	// Fast path: exact name or qualified-name hit against the project index is
+	// O(candidate set). Substring queries fall through to the authoritative scan,
+	// which returns node references without cloning the whole project.
+	if idx := s.indexFor(projectID); idx != nil {
+		if state, _ := idx.State(); state == graph.IndexReady {
+			if ids := idx.ByName(query); len(ids) > 0 {
+				return s.presentNodes(idx, ids, low, limit), nil
+			}
+			if ids := idx.ByQualifiedName(query); len(ids) > 0 {
+				return s.presentNodes(idx, ids, low, limit), nil
+			}
+		}
+	}
 	nodes, err := s.graph.FindNodes(kind, map[string]any{"project_id": projectID})
 	if err != nil {
 		return nil, err
@@ -122,7 +136,29 @@ func (s *CodeGraphService) Find(projectID, kind, query string, limit int) ([]map
 	sort.SliceStable(nodes, func(i, j int) bool {
 		return strProp(nodes[i], "name") < strProp(nodes[j], "name")
 	})
-	low := strings.ToLower(query)
+	return s.presentMatches(nodes, low, limit), nil
+}
+
+func (s *CodeGraphService) presentNodes(idx *graph.GraphQueryIndex, ids []string, low string, limit int) []map[string]any {
+	var rows []map[string]any
+	for _, id := range ids {
+		node, ok := idx.GetNode(id)
+		if !ok {
+			continue
+		}
+		name, _ := node.Properties["name"].(string)
+		qname, _ := node.Properties["qualified_name"].(string)
+		if strings.Contains(strings.ToLower(name), low) || strings.Contains(strings.ToLower(qname), low) {
+			rows = append(rows, Present(node))
+			if len(rows) >= limit {
+				break
+			}
+		}
+	}
+	return rows
+}
+
+func (s *CodeGraphService) presentMatches(nodes []*models.Node, low string, limit int) []map[string]any {
 	var rows []map[string]any
 	for _, n := range nodes {
 		name, _ := n.Properties["name"].(string)
@@ -134,10 +170,20 @@ func (s *CodeGraphService) Find(projectID, kind, query string, limit int) ([]map
 			}
 		}
 	}
-	return rows, nil
+	return rows
 }
 
 func (s *CodeGraphService) Function(projectID, name string) (map[string]any, error) {
+	// Fast path: exact name lookup against the project index (O(candidate set)),
+	// not a full project scan. Falls back to the authoritative graph when the
+	// index is unavailable.
+	if idx := s.indexFor(projectID); idx != nil {
+		if state, _ := idx.State(); state == graph.IndexReady {
+			if node, ok := s.nodeByName(idx, name); ok {
+				return Present(node), nil
+			}
+		}
+	}
 	nodes, err := s.Find(projectID, "Function", name, 20)
 	if err != nil {
 		return nil, err
@@ -159,6 +205,25 @@ func (s *CodeGraphService) Function(projectID, name string) (map[string]any, err
 		return nodes[0], nil
 	}
 	return nil, nil
+}
+
+// nodeByName resolves an exact function name through the index, preferring a
+// qualified "Owner.method" match and then a bare-name match. Returns the first
+// deterministic candidate; ambiguous names fall through to the caller.
+func (s *CodeGraphService) nodeByName(idx *graph.GraphQueryIndex, name string) (*models.Node, bool) {
+	if strings.Contains(name, ".") {
+		if ids := idx.ByQualifiedName(name); len(ids) > 0 {
+			if node, ok := idx.GetNode(ids[0]); ok && strProp(node, "project_id") == s.projectForNode(ids[0]) {
+				return node, true
+			}
+		}
+	}
+	if ids := idx.ByName(name); len(ids) > 0 {
+		if node, ok := idx.GetNode(ids[0]); ok {
+			return node, true
+		}
+	}
+	return nil, false
 }
 
 const (

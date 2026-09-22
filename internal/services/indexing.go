@@ -584,19 +584,16 @@ func (s *CodeIndexService) SetMaxWorkers(n int) {
 var MaxIndexFiles = 50000
 
 func (s *CodeIndexService) IndexRepository(projectID, root string, incremental bool, ignore []string, skipGraphify bool) (map[string]any, error) {
-	fmt.Fprintf(os.Stderr, "DEBUG: IndexRepository start\n")
 	path, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(os.Stderr, "DEBUG: resolving symlinks\n")
 	info, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return nil, fmt.Errorf("not a repository directory: %s", root)
 	}
 	path = info
 
-	fmt.Fprintf(os.Stderr, "DEBUG: upserting project node\n")
 	project, err := s.graph.UpsertNode("Project", map[string]any{"id": projectID}, map[string]any{
 		"project_id": projectID, "path": path,
 	})
@@ -723,7 +720,7 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 			changed++
 		}
 	}
-	progress.set("done", len(results), funcs, truncated, graphErr)
+	progress.set("done", len(results), funcs, truncated, nil)
 	printTiming()
 	return map[string]any{
 		"project_id":     projectID,

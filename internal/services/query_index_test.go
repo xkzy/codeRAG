@@ -226,3 +226,67 @@ func TestIndexFor_RefreshesAfterMutation(t *testing.T) {
 		}
 	}
 }
+
+func TestFind_IndexVsAuthoritative(t *testing.T) {
+	repo := graph.NewMemoryGraphRepository()
+	if _, err := repo.UpsertNode("Project",
+		map[string]any{"id": "fd", "project_id": "fd"},
+		map[string]any{"path": "/tmp/fd"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		name := fmt.Sprintf("Func%d", i)
+		if _, err := repo.UpsertNode("Function",
+			map[string]any{"id": name, "stable_id": "func:a.go:" + name, "project_id": "fd"},
+			map[string]any{"name": name, "qualified_name": "pkg." + name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	indexed := services.NewCodeGraphService(repo)
+	authoritative := services.NewCodeGraphService(authoritativeOnlyRepo{repo})
+
+	for _, name := range []string{"Func0", "func", "func2"} {
+		indexedRows, err := indexed.Find("fd", "Function", name, 20)
+		if err != nil {
+			t.Fatalf("indexed Find(%q): %v", name, err)
+		}
+		authoritativeRows, err := authoritative.Find("fd", "Function", name, 20)
+		if err != nil {
+			t.Fatalf("authoritative Find(%q): %v", name, err)
+		}
+		if !reflect.DeepEqual(indexedRows, authoritativeRows) {
+			t.Fatalf("Find(%q) mismatch:\n indexed=%v\n authoritative=%v", name, indexedRows, authoritativeRows)
+		}
+	}
+	if indexed.IndexFor("fd") == nil {
+		t.Fatal("expected Find to create a project index")
+	}
+}
+
+func TestFunction_IndexVsAuthoritative(t *testing.T) {
+	repo := graph.NewMemoryGraphRepository()
+	if _, err := repo.UpsertNode("Project",
+		map[string]any{"id": "fn", "project_id": "fn"},
+		map[string]any{"path": "/tmp/fn"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertNode("Function",
+		map[string]any{"id": "target", "stable_id": "func:a.go:Target", "project_id": "fn"},
+		map[string]any{"name": "Target", "qualified_name": "pkg.Target"}); err != nil {
+		t.Fatal(err)
+	}
+	indexed := services.NewCodeGraphService(repo)
+	authoritative := services.NewCodeGraphService(authoritativeOnlyRepo{repo})
+
+	indexedFn, err := indexed.Function("fn", "Target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authoritativeFn, err := authoritative.Function("fn", "Target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(indexedFn, authoritativeFn) {
+		t.Fatalf("Function mismatch:\n indexed=%v\n authoritative=%v", indexedFn, authoritativeFn)
+	}
+}
