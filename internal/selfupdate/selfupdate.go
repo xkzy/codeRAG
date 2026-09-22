@@ -15,7 +15,7 @@ import (
 
 const (
 	GitHubAPIBase = "https://api.github.com"
-	DefaultRepo   = "kilocode-org/codergag"
+	DefaultRepo   = "xkzy/codeRAG"
 )
 
 type Release struct {

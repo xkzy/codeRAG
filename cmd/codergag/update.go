@@ -37,7 +37,7 @@ func runUpdate(args []string) int {
 	fmt.Printf("Binary: %s\n", binaryPath)
 	fmt.Println("Checking for updates...")
 	
-	info, err := selfupdate.GetUpdateInfo(Version, "kilocode-org/codergag")
+	info, err := selfupdate.GetUpdateInfo(Version, "xkzy/codeRAG")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "update check failed: %v\n", err)
 		return 1
@@ -82,7 +82,7 @@ func runUpdate(args []string) int {
 }
 
 func runUpdateCheck(args []string) int {
-	info, err := selfupdate.GetUpdateInfo(Version, "kilocode-org/codergag")
+	info, err := selfupdate.GetUpdateInfo(Version, "xkzy/codeRAG")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "update check failed: %v\n", err)
 		return 1
