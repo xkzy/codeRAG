@@ -819,28 +819,38 @@ func (r *ToolRegistry) call(name string, args map[string]any) (map[string]any, e
 	if spec == nil {
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
-
+	var err error
 	if !globalTools[name] {
 		projectID := getString(args, "project_id")
 		if projectID == "" {
 			return nil, fmt.Errorf("project_id is required")
 		}
-		var err error
-		if args, err = r.resolveStableRefs(projectID, args); err != nil {
+		var resolved map[string]bool
+		args, resolved, err = r.resolveStableRefs(projectID, args)
+		if err != nil {
 			return nil, err
 		}
-		if err := r.validateCrossProjectRefs(projectID, args); err != nil {
+		if err := r.validateCrossProjectRefs(projectID, args, resolved); err != nil {
 			return nil, err
 		}
 	}
 
 	if !paginatedTools[name] {
 		res, err := spec.Handler(args)
-		if err == nil && shapedTools[name] && getString(args, "detail") != detailFull {
-			r.curRaw = approxTokens(res)
-			shapeResult(res, args)
-			r.curShaped = approxTokens(res)
-			res["approx_tokens"] = r.curShaped
+		if err == nil {
+			// Account tokens with a single marshal. Shaped tools pay one
+			// extra marshal to measure the pre-shape size; non-shaped tools
+			// report their result size once so usage stats are meaningful.
+			if shapedTools[name] && getString(args, "detail") != detailFull {
+				r.curRaw = approxTokens(res)
+				shapeResult(res, args)
+				r.curShaped = approxTokens(res)
+				res["approx_tokens"] = r.curShaped
+			} else {
+				r.curRaw = approxTokens(res)
+				r.curShaped = r.curRaw
+				res["approx_tokens"] = r.curShaped
+			}
 		}
 		return res, err
 	}
@@ -909,14 +919,15 @@ func (r *ToolRegistry) callPaginated(spec *ToolSpec, args map[string]any) (map[s
 	return result, nil
 }
 
-func (r *ToolRegistry) validateCrossProjectRefs(projectID string, args map[string]any) error {
+func (r *ToolRegistry) validateCrossProjectRefs(projectID string, args map[string]any, resolved map[string]bool) error {
 	for key, value := range args {
-		if strings.HasSuffix(key, "_id") && key != "project_id" {
-			if nodeID, ok := value.(string); ok && nodeID != "" {
-				if node, err := r.app.Graph.GetNode(nodeID); err == nil && node != nil {
-					if npid, ok := node.Properties["project_id"].(string); ok && npid != projectID {
-						return fmt.Errorf("%s belongs to a different project", key)
-					}
+		if !strings.HasSuffix(key, "_id") || key == "project_id" || resolved[key] {
+			continue
+		}
+		if nodeID, ok := value.(string); ok && nodeID != "" {
+			if node, err := r.app.Graph.GetNode(nodeID); err == nil && node != nil {
+				if npid, ok := node.Properties["project_id"].(string); ok && npid != projectID {
+					return fmt.Errorf("%s belongs to a different project", key)
 				}
 			}
 		}
@@ -1054,8 +1065,9 @@ var stableRefArgs = map[string]bool{
 	"symbol_id": true, "binary_function_id": true, "source_function_id": true, "implementation_id": true,
 }
 
-func (r *ToolRegistry) resolveStableRefs(projectID string, args map[string]any) (map[string]any, error) {
+func (r *ToolRegistry) resolveStableRefs(projectID string, args map[string]any) (map[string]any, map[string]bool, error) {
 	var out map[string]any
+	resolved := map[string]bool{}
 	for key, v := range args {
 		if !stableRefArgs[key] {
 			continue
@@ -1070,7 +1082,7 @@ func (r *ToolRegistry) resolveStableRefs(projectID string, args map[string]any) 
 			if len(cands) > 0 {
 				msg += "; did you mean: " + strings.Join(cands, ", ")
 			}
-			return nil, fmt.Errorf("%s", msg)
+			return nil, nil, fmt.Errorf("%s", msg)
 		}
 		if out == nil {
 			out = make(map[string]any, len(args))
@@ -1079,9 +1091,10 @@ func (r *ToolRegistry) resolveStableRefs(projectID string, args map[string]any) 
 			}
 		}
 		out[key] = n.ID
+		resolved[key] = true
 	}
 	if out == nil {
-		return args, nil
+		return args, nil, nil
 	}
-	return out, nil
+	return out, resolved, nil
 }

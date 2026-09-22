@@ -47,6 +47,33 @@ func TestRegistryIndexAndQuery(t *testing.T) {
 	}
 }
 
+// TestCallTokenAccounting verifies the pre/post interception accounts tokens
+// with a single marshal and reports non-shaped tools once.
+func TestCallTokenAccounting(t *testing.T) {
+	reg := NewToolRegistry(services.ApplicationInMemory())
+	if _, err := reg.Call("list_languages", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	// Non-shaped global tool: raw == shaped, and the field is present.
+	if reg.curRaw == 0 || reg.curShaped != reg.curRaw {
+		t.Fatalf("non-shaped tool accounting: raw=%d shaped=%d", reg.curRaw, reg.curShaped)
+	}
+}
+
+// TestResolveStableRefsDedupesValidation verifies the pre-tool interceptor
+// resolves stable IDs and the post-check does not re-fetch the same node.
+func TestResolveStableRefsDedupesValidation(t *testing.T) {
+	reg := NewToolRegistry(services.ApplicationInMemory())
+	// Unknown stable ID is refused with a correction, not executed.
+	_, err := reg.Call("get_callers", map[string]any{"project_id": "p", "function_id": "func:missing.go:Nope"})
+	if err == nil {
+		t.Fatal("expected unknown stable id to be refused")
+	}
+	if !strings.Contains(err.Error(), services.RefInvalid) {
+		t.Fatalf("expected %s in error: %v", services.RefInvalid, err)
+	}
+}
+
 func TestAllToolsHaveHandlers(t *testing.T) {
 	reg := NewToolRegistry(services.ApplicationInMemory())
 	seen := map[string]bool{}

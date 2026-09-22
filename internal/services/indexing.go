@@ -19,23 +19,6 @@ import (
 	"codergag/internal/models"
 )
 
-var indexTiming = make(map[string]time.Duration)
-var indexTimingMu sync.Mutex
-
-func recordTiming(name string, start time.Time) {
-	indexTimingMu.Lock()
-	defer indexTimingMu.Unlock()
-	indexTiming[name] = time.Since(start)
-}
-
-func printTiming() {
-	indexTimingMu.Lock()
-	defer indexTimingMu.Unlock()
-	for k, v := range indexTiming {
-		fmt.Printf("TIMING: %s = %v\n", k, v)
-	}
-}
-
 var (
 	supportedExts = map[string]bool{
 		".py": true, ".c": true, ".h": true, ".cc": true, ".cpp": true, ".hpp": true,
@@ -612,9 +595,7 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 	progress := s.progressFor(projectID, path)
 
 	// Fast change detection: use git diff if available, otherwise walk
-	discoveryStart := time.Now()
 	files, changedFiles, truncated, walkErr := s.discoverFiles(path, incremental, excluded, projectID)
-	recordTiming("discovery", discoveryStart)
 	if walkErr != nil {
 		return nil, walkErr
 	}
@@ -623,7 +604,6 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 	progress.set("walk", 0, 0, truncated, nil)
 
 	// Parallel index files using worker pool
-	fileIndexStart := time.Now()
 	var results []*IndexedFile
 	if incremental && len(changedFiles) > 0 && !truncated {
 		// Incremental: only index changed files
@@ -635,13 +615,11 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 		// All files unchanged, nothing to index
 		results = s.indexFilesParallel(project.ID, projectID, files, incremental, progress)
 	}
-	recordTiming("file_index", fileIndexStart)
 
 	// Invalidate resolver cache since graph has changed
 	s.invalidateCache(projectID)
 
 	// Handle deleted files (files that existed in graph but not on disk)
-	deleteStart := time.Now()
 	existingFiles, _ := s.graph.FindNodes("SourceFile", map[string]any{"project_id": projectID})
 	filesSet := make(map[string]bool, len(files))
 	for _, f := range files {
@@ -667,7 +645,6 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 	if len(deleted) > 0 {
 		s.graph.RemoveNodes(deleted)
 	}
-	recordTiming("delete_files", deleteStart)
 
 	// Count changed files
 	changedCount := 0
@@ -681,9 +658,7 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 	shouldResolve := !incremental || changedCount > 0 || len(deletedFiles) > 0
 	if shouldResolve {
 		progress.set("resolve", len(results), sumFuncs(results), truncated, nil)
-		resolveStart := time.Now()
 		s.resolveGraph(projectID)
-		recordTiming("resolve_graph", resolveStart)
 	}
 
 	prior, _ := s.graph.FindNodes("GraphifyRun", map[string]any{"project_id": projectID})
@@ -695,9 +670,7 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 	var graphOut *Graph
 	if !skipGraphifyInternal {
 		progress.set("graphify", len(results), sumFuncs(results), truncated, nil)
-		graphifyStart := time.Now()
 		graphOut, graphErr = NewGraphify(path, false, false).Run()
-		recordTiming("graphify", graphifyStart)
 	}
 	if graph := graphOut; !skipGraphifyInternal && graphErr == nil {
 		data, _ := json.Marshal(graph)
@@ -721,7 +694,6 @@ func (s *CodeIndexService) IndexRepository(projectID, root string, incremental b
 		}
 	}
 	progress.set("done", len(results), funcs, truncated, nil)
-	printTiming()
 	return map[string]any{
 		"project_id":     projectID,
 		"files_seen":     len(results),
@@ -1404,29 +1376,17 @@ func countParams(params string) int {
 
 func (s *CodeIndexService) resolveGraph(projectID string) {
 	// Build shared resolver index once
-	idxStart := time.Now()
 	idx := s.buildResolverIndex(projectID)
-	recordTiming("build_resolver_index", idxStart)
 
-	resolveCallsStart := time.Now()
 	s.ResolveCallsWithIndex(projectID, idx)
-	recordTiming("resolve_calls", resolveCallsStart)
 
-	resolveInheritanceStart := time.Now()
 	s.ResolveInheritanceWithIndex(projectID, idx)
-	recordTiming("resolve_inheritance", resolveInheritanceStart)
 
-	resolveReferencesStart := time.Now()
 	s.ResolveReferencesWithIndex(projectID, idx)
-	recordTiming("resolve_references", resolveReferencesStart)
 
-	resolveImportsStart := time.Now()
 	s.ResolveImportsWithIndex(projectID, idx)
-	recordTiming("resolve_imports", resolveImportsStart)
 
-	resolveDataFlowStart := time.Now()
 	s.ResolveDataFlowWithIndex(projectID, idx)
-	recordTiming("resolve_dataflow", resolveDataFlowStart)
 }
 
 // ResolverIndex holds pre-built indexes for all resolvers to share.
