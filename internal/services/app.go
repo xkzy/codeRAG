@@ -17,31 +17,34 @@ import (
 )
 
 type Application struct {
-	Graph       graph.GraphRepository
-	Cache       *cache.CacheManager
-	Events      *EventEngine
-	Index       *CodeIndexService
-	Code        *CodeGraphService
-	Evidence    *EvidenceService
-	Reverse     *ReverseEngineeringService
-	Analysis    *AnalysisService
-	Memory      *MemoryService
-	Documents   *DocumentService
-	Git         *GitService
-	Security    *SecurityAuditService
-	Team        *TeamService
-	Refs        *ReferenceResolver
-	Tasks       *TaskService
-	Context     *ContextCompiler
-	Verify      *VerificationRunService
-	Privacy     *PrivacyService
-	Runtime     *RuntimeService
-	Daemon      *Daemon
-	AntiLoop    *AntiLoopDetector
-	SmallModel  *SmallModelService
-	StatusPanel *StatusPanel
-	Session     *SessionManager
-	Snapshot    *SnapshotManager
+	Graph             graph.GraphRepository
+	Cache             *cache.CacheManager
+	Events            *EventEngine
+	Index             *CodeIndexService
+	Code              *CodeGraphService
+	Evidence          *EvidenceService
+	Reverse           *ReverseEngineeringService
+	BinaryAnalysis    *BinaryAnalysisService
+	BinaryVerification *BinaryVerificationService
+	Porting           *PortingService
+	Analysis          *AnalysisService
+	Memory            *MemoryService
+	Documents         *DocumentService
+	Git               *GitService
+	Security          *SecurityAuditService
+	Team              *TeamService
+	Refs              *ReferenceResolver
+	Tasks             *TaskService
+	Context           *ContextCompiler
+	Verify            *VerificationRunService
+	Privacy           *PrivacyService
+	Runtime           *RuntimeService
+	Daemon            *Daemon
+	AntiLoop          *AntiLoopDetector
+	SmallModel        *SmallModelService
+	StatusPanel       *StatusPanel
+	Session           *SessionManager
+	Snapshot          *SnapshotManager
 }
 
 // IndexProgress returns the most recent index-progress snapshot for a project.
@@ -76,23 +79,26 @@ func NewApplication(g graph.GraphRepository) *Application {
 	refs := NewReferenceResolver(g)
 	ev := NewEvidenceService(g)
 	app := &Application{
-		Graph:     g,
-		Events:    NewEventEngine(1024),
-		Index:     NewCodeIndexService(g),
-		Code:      NewCodeGraphService(g),
-		Evidence:  ev,
-		Reverse:   NewReverseEngineeringService(g),
-		Analysis:  NewAnalysisService(g),
-		Memory:    NewMemoryService(g),
-		Documents: NewDocumentService(g),
-		Git:       NewGitService(g),
-		Security:  sec,
-		Team:      NewTeamService(g),
-		Refs:      refs,
-		Tasks:     NewTaskService(g, refs, ev),
-		Verify:    NewVerificationRunService(DefaultVerificationConfig(), g),
-		Privacy:   NewPrivacyService(g),
-		Runtime:   NewRuntimeService(g),
+		Graph:              g,
+		Events:             NewEventEngine(1024),
+		Index:              NewCodeIndexService(g),
+		Code:               NewCodeGraphService(g),
+		Evidence:           ev,
+		Reverse:            NewReverseEngineeringService(g),
+		BinaryAnalysis:     NewBinaryAnalysisService(g),
+		BinaryVerification: NewBinaryVerificationService(g),
+		Porting:            NewPortingService(g),
+		Analysis:           NewAnalysisService(g),
+		Memory:             NewMemoryService(g),
+		Documents:          NewDocumentService(g),
+		Git:                NewGitService(g),
+		Security:           sec,
+		Team:               NewTeamService(g),
+		Refs:               refs,
+		Tasks:              NewTaskService(g, refs, ev),
+		Verify:             NewVerificationRunService(DefaultVerificationConfig(), g),
+		Privacy:            NewPrivacyService(g),
+		Runtime:            NewRuntimeService(g),
 	}
 	app.StatusPanel = NewStatusPanel(app)
 	app.Context = NewContextCompiler(app)

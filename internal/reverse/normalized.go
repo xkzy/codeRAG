@@ -44,6 +44,85 @@ type NormalizedBinary struct {
 	Sha256    string
 	Tool      string
 	Functions []NormalizedFunction
+	Modules   []NormalizedModule
+	Sections  []NormalizedSection
+	Globals   []NormalizedGlobal
+	Imports   []NormalizedImport
+	Exports   []NormalizedExport
+	Symbols   []NormalizedSymbol
+	Types     []NormalizedType
+	Registers []NormalizedRegister
+	Constants []NormalizedConstant
+	ExternalAPIs []NormalizedExternalAPI
+}
+
+type NormalizedModule struct {
+	Name    string
+	Path    string
+}
+
+type NormalizedSection struct {
+	Name      string
+	Address   string
+	Size      int
+	Alignment int
+}
+
+type NormalizedGlobal struct {
+	Address string
+	Name    string
+	Size    int
+}
+
+type NormalizedImport struct {
+	Name     string
+	Ordinal  int
+	Hint     string
+}
+
+type NormalizedExport struct {
+	Name     string
+	Address  string
+	Ordinal  int
+}
+
+type NormalizedSymbol struct {
+	Address string
+	Name    string
+	Binding string
+	Type    string
+}
+
+type NormalizedType struct {
+	Name   string
+	Size   int
+	Fields []TypeField
+}
+
+type TypeField struct {
+	Name   string
+	Offset int
+	Type   string
+	Size   int
+}
+
+type NormalizedRegister struct {
+	Name       string
+	Role       string
+	WidthBits  int
+}
+
+type NormalizedConstant struct {
+	Value    string
+	Type     string
+	Address  string
+}
+
+type NormalizedExternalAPI struct {
+	Name         string
+	Module       string
+	ReturnType   string
+	ArgumentTypes []string
 }
 
 // RuntimeTrace represents a runtime execution trace.

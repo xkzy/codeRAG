@@ -1,289 +1,333 @@
 ---
 name: reverse-engineer
-description: Use this skill whenever the user needs to reverse engineer binary code, compiled programs, assembly code, or firmware — especially when they want to understand what a binary does, extract its logic, or convert it into a high-level language like C, Python, Go, or Rust. This skill leverages codeRAG's semantic graph tools to analyze code structure cheaply (instead of dumping expensive raw assembly to the LLM), uses RetDec for automated decompilation to C as a first pass, traces call graphs and data flow through the graph, and guides the user through recording hypotheses with evidence. Use this skill when the user says "reverse engineer", "decompile", "translate to C", "convert binary to source", "understand what this binary does", "analyze firmware", or any reverse engineering task. Do not use for simple disassembler output reading — use codeRAG's get_callees/get_callers/codergag_get_related_code tools directly for that.
+description: Use this skill whenever the user needs to reverse engineer binary code, compiled programs, assembly code, or firmware — especially when they want to understand what a binary does, extract its logic, or convert it into a high-level language like C, Python, Go, or Rust. This skill leverages codeRAG's semantic graph tools to analyze code structure cheaply (instead of dumping expensive raw assembly to the LLM), uses RetDec for automated decompilation to C as a first pass, traces call graphs and data flow through the graph, and guides the user through recording hypotheses with evidence. Use this skill when the user says "reverse engineer", "decompile", "translate to C", "convert binary to source", "understand what this binary does", "analyze firmware", "port this binary to Rust", or any reverse engineering task. Do not use for simple disassembler output reading — use codeRAG's get_callees/get_callers/codergag_get_related_code tools directly for that.
 ---
 
-# Reverse Engineering & Language Conversion Skill
+# Reverse Engineering & Language Porting Skill
 
 ## Overview
 
 This skill provides a structured, token-efficient workflow for reverse engineering binaries and converting the analysis into a target programming language. Instead of feeding raw assembly to an LLM (which costs thousands of tokens per function), this workflow leverages:
 
-1. **RetDec decompiler** — produces decompiled C automatically (no LLM cost for initial pass)
-2. **codeRAG semantic graph** — stores structured analysis (call graphs, data flow, cross-refs) as graph nodes/edges
-3. **Semantic tools** — query the graph for specific information instead of dumping everything
+1. **Decompiler adapters** (RetDec, Ghidra, IDA, Binary Ninja) — produces decompiled C automatically
+2. **codeRAG persistent knowledge graph** — stores structured analysis (call graphs, CFG, data flow, cross-refs) as graph nodes/edges
+3. **Lazy analysis** — CFG, data-flow, and call graphs are computed on-demand and cached
+4. **Semantic porting tools** — track semantic mappings and known differences between binary and ported code
+5. **Differential verification** — compare binary vs ported output to validate behavioral equivalence
 
-## Prerequisites
+## Core Principle
 
-Before starting, ensure the binary has been indexed by codeRAG. Required tools:
-
-- `codergag_index_repository` — index the binary's source or the binary itself
-- `codergag_get_subsystem` — check for existing reverse engineering infrastructure
-- `codergag_find_symbol` — find functions by name
-
-### Check if binary is indexed
-
-```
-codergag_get_subsystem(project_id="<project_id>", name="reverse")
-```
-
-If the binary isn't indexed yet, the user needs to run:
-```
-codergag_index_binary --json '{"binary_id": "<id>", "path": "<path>", "sha256": "<hash>", "tool": "retdec", "functions": [...]}'
-```
+> **Do expensive reverse engineering once, persist the knowledge, incrementally refine it, and let future agents consume the accumulated knowledge instead of rediscovering the binary from scratch.**
 
 ## Workflow
 
-### Step 1: Decompile with RetDec
-
-Use the RetDec adapter (`adapters/retdec`) to convert the binary to decompiled C. RetDec can be run via:
-
-- **Online**: `https://retdec.com/decompilation/` (REST API available)
-- **Locally**: Install from `https://github.com/avast/retdec`
-- **Docker**: `docker run -v $PWD:/mount retdec-decompiler <binary>`
-
-The RetDec output includes:
-- Decompiled C code per function (`decompiler_output` field)
-- Function metadata: addresses, sizes, call targets, strings
-- Basic blocks with instructions (if available)
-
-Parse the RetDec JSON output into `NormalizedBinary` format using the `RetDecAdapter`.
-
-### Step 2: Import into codeRAG graph
+### Phase 1: Index Binary
 
 ```
-codergag_index_binary --json '{"binary_id": "<id>", "path": "<path>", "sha256": "<hash>", "tool": "retdec", "functions": [...]}'
+codergag_index_binary --json '{
+  "binary_id": "<id>",
+  "path": "<path>",
+  "sha256": "<hash>",
+  "tool": "retdec",
+  "functions": [...]
+}'
 ```
 
 This stores:
 - `Binary` nodes (one per binary)
-- `BinaryFunction` nodes (one per function)
+- `BinaryFunction` nodes (one per function with address, name, size)
 - `BasicBlock`, `Instruction` nodes
 - `DECOMPILED_AS` edges (function → decompiler output)
-- `CALLS` edges (call graph)
+- `CALLS` edges (direct call graph)
+- `BRANCHES_TO` edges (control flow)
 - `REFERENCES` edges (function → strings)
+- `REFERENCES_DATA` edges (data access)
 
-**Token safety**: Decompiler output is automatically truncated to 50,000 characters during import to prevent token explosion from complex functions. The full output can be retrieved from the original source if needed. If `truncated` is true on a `DecompilerOutput` node, the output was cut short.
+**Token safety**: Decompiler output is automatically truncated to 50,000 characters during import.
 
-### Step 3: Query the graph for structural understanding
+### Phase 2: Lazy Analysis (On-Demand)
 
-Instead of dumping all assembly, query specific information:
-
-```
-codergag_get_callees(project_id="<project_id>", function_id="<func_node_id>")
-```
-→ Get what this function calls (transitive call graph)
+Query specific analysis without triggering full binary analysis:
 
 ```
-codergag_get_callers(project_id="<project_id>", function_id="<func_node_id>")
+codergag_get_cfg --project_id <id> --binary_id <bin> --function_address <addr>
 ```
-→ Get what calls this function (entry points, callers)
-
-```
-codergag_trace_call_path(project_id="<project_id>", source_id="<entry>", target_id="<func>")
-```
-→ Trace call path from entry point to target function
+→ Returns control flow graph, basic blocks, branch edges
 
 ```
-codergag_get_related_code(project_id="<project_id>", node_id="<func_node_id>")
+codergag_get_data_flow --project_id <id> --binary_id <bin> --function_address <addr>
 ```
-→ Get all related code (data refs, code refs, callers, callees)
-
-```
-codergag_get_evidence(project_id="<project_id>", subject_id="<func_node_id>")
-```
-→ Get existing hypotheses and evidence for this function
+→ Returns arguments, return values, global reads/writes, register usage
 
 ```
-codergag_get_hypotheses(project_id="<project_id>", subject_id="<func_node_id>")
+codergag_get_call_graph --project_id <id> --binary_id <bin>
 ```
-→ Get competing hypotheses about what this function does
-
-### Step 4: Record hypotheses with evidence
-
-As you reverse engineer, record findings as hypotheses with supporting/contradicting evidence. This keeps analysis stateful and allows future sessions to resume:
+→ Returns full call graph with callers/callees counts
 
 ```
-codergag_record_re_hypothesis --json '{"id": "<id>", "subject_id": "<func_id>", "claim": "<what this function does>", "confidence": 0.8, "status": "active", "evidence_for": [...], "evidence_against": [...]}'
+codergag_get_function_facts --project_id <id> --binary_id <bin> --function_address <addr>
 ```
+→ Returns known facts, hypotheses, caller/callee counts
 
-Record observations:
-```
-codergag_record_observation --json '{"agent": "<name>", "confidence": 0.9, "description": "<what was observed>", "method": "<static|dynamic|manual>"}'
-```
+### Phase 3: Prepare Reverse Engineering Context
 
-### Step 4b: Auto-intercept for LLM looping/hallucination
-
-After recording hypotheses, check for LLM analysis integrity issues:
+For complex tasks, use the context engine that assembles all relevant information:
 
 ```
-codergag_check_interception --json '{"project_id": "<id>", "subject_id": "<func_id>"}'
+codergag_prepare_reverse_engineering_context --project_id <id> --question "<task>" --target "<bin>|<addr>"
 ```
 
-This tool automatically detects:
-- **Looping**: Same claim recorded multiple times (possible analysis repetition)
-- **Hallucination**: Contradictory high-confidence hypotheses, unverified high-confidence evidence, or hypotheses without supporting evidence
-- **Stale claims**: Too many hypotheses recorded in a short time window (30s)
+This returns:
+- Function info (address, name, size, stable_id)
+- Facts (strings, constants, data refs)
+- Hypotheses with confidence
+- CFG (if requested)
+- Data flow (if requested)
+- Callers and callees
 
-If `loop_detected` or `hallucination_risk` is true, pause and:
-1. Re-check against decompiled C output or original binary
-2. Cross-reference with `codergag_get_evidence` for existing findings
-3. Use `codergag_trace_data_flow` to verify data flow claims
+### Phase 4: Record Hypotheses with Evidence
 
-### Step 5: Convert to target language
-
-After understanding the function's purpose, data flow, and call graph, convert the decompiled C (or raw assembly if no C available) into the target language.
-
-**Token-saving technique**: Only convert the functions that matter. Use the call graph to identify the relevant subgraph, and only send that subset to the LLM for language conversion.
-
-For each function to convert:
-1. Get its decompiled C from `DECOMPILED_AS` edge neighbor
-2. Get its callees and their signatures
-3. Get data flow with `codergag_trace_data_flow`
-4. Convert the C pseudocode to the target language
-
-### Step 6: Validate the reconstruction
+As you reverse engineer, record findings as hypotheses with supporting/contradicting evidence:
 
 ```
-codergag_record_validation --json '{"binary_function_id": "<bf_id>", "implementation_id": "<src_fn_id>", "test_name": "<test>", "status": "passed|failed", "confidence": 0.9, "method": "differential"}'
+codergag_record_re_hypothesis --json '{
+  "id": "<id>",
+  "subject_id": "<func_id>",
+  "claim": "<what this function does>",
+  "confidence": 0.8,
+  "status": "active",
+  "evidence_for": [...],
+  "evidence_against": [...]
+}'
 ```
 
-This records the equivalence between binary and source functions, allowing future lookups.
+### Phase 5: Semantic Porting
 
-## Available codeRAG Tools (Token-Efficient)
+Record semantic mappings to track how binary constructs map to target language:
 
-### Small-Model Offloading Tools
-When Ollama or another small-model provider is configured (`llm.enabled: true` in config), use these tools to offload simple tasks to cheap models like phi3, gemma2, or llama3:
+```
+codergag_record_semantic_mapping --json '{
+  "project_id": "<id>",
+  "binary_id": "<bin>",
+  "function_address": "<addr>",
+  "source_construct": "32-bit signed arithmetic",
+  "semantic_meaning": "wraparound semantics required",
+  "target_construct": "int32_t in Rust",
+  "translation_rule": "use i32 with wrapping_* methods",
+  "compatibility_issue": "overflow detection differs",
+  "confidence": 0.85
+}'
+```
 
-- `classify_task` - Determines if a task is simple enough for a small model. Use before sending queries to decide routing.
-- `small_ask` - Sends a simple query directly to the small model. Use for questions like "what is this function name?" or "list all exported symbols".
+Record porting decisions:
 
-Workflow:
-1. Run `classify_task` with the task description
-2. If `can_offload` is true, use `small_ask` for the actual query
-3. If `can_offload` is false, use the main model with full codeRAG tools
+```
+codergag_record_porting_decision --project_id <id> --binary_id <bin> --function_address <addr> --language rust --original_construct "malloc/free" --target_construct "Box::new/Drop" --reason "Rust memory model" --confidence 0.9
+```
 
-This can reduce token costs by 10-90x for simple operations like:
-- Function naming suggestions
-- Pattern matching across binaries
-- Simple categorization tasks
-- Basic string/symbol extraction
+### Phase 6: Track Known Differences
 
-| Tool | Use Case | Token Savings |
-|------|----------|---------------|
-| `codergag_find_function` | Find function by name | Avoid scanning entire disassembly |
-| `codergag_find_symbol` | Find any symbol (class, struct, var) | Targeted lookup vs. grep |
-| `codergag_get_callees` | Get called functions (transitive) | Call graph from graph, not assembly |
-| `codergag_get_callers` | Get calling functions | Reverse call graph |
-| `codergag_trace_call_path` | Trace call path between two functions | Shortest path, not all paths |
-| `codergag_trace_data_flow` | Trace data flow between functions | Understand variable passing |
-| `codergag_get_related_code` | All code related to a node | Comprehensive but targeted |
-| `codergag_get_type_hierarchy` | Inheritance/subtype relationships | C++ vtable/RTTI analysis |
-| `codergag_find_related_tests` | Find tests for a function | Validate reconstruction |
-| `codergag_get_evidence` | Get evidence for a hypothesis | Build on prior analysis |
-| `codergag_get_hypotheses` | Get competing hypotheses | Avoid re-analyzing |
-| `codergag_resolve_reference` | Resolve stable IDs to current locations | Handle code changes |
+When behavioral differences are discovered:
+
+```
+codergag_record_known_difference --project_id <id> --binary_id <bin> --function_address <addr> --diff_type "integer_overflow" --description "signed conversion causes different wraparound" --severity major --impact "may cause rare bugs in production"
+```
+
+### Phase 7: Differential Verification
+
+After porting, validate behavioral equivalence:
+
+```
+codergag_record_verification_test --json '{
+  "project_id": "<id>",
+  "binary_id": "<bin>",
+  "function_address": "<addr>",
+  "test_name": "test_parse_packet_valid",
+  "input": {"buffer": "...", "length": 10},
+  "binary_output": {"result": 0, "parsed": {...}},
+  "ported_output": {"result": 0, "parsed": {...}},
+  "match": true
+}'
+```
+
+For mismatches, analyze root cause:
+
+```
+codergag_analyze_mismatch --project_id <id> --binary_id <bin> --function_address <addr> --test_id <test_id>
+```
+→ Returns likely causes (signed_conversion, type_mismatch, overflow, etc.)
+
+Get overall mismatch summary:
+
+```
+codergag_get_mismatch_summary --project_id <id> --binary_id <bin> --function_address <addr>
+```
+→ Returns counts of passed/failed tests, critical/major/minor issues
+
+## Porting Model
+
+### Semantic Preservation Rules
+
+When porting, preserve:
+- **Integer width** — int8 vs int16 vs int32 vs int64
+- **Signedness** — unsigned vs signed affects overflow behavior
+- **Overflow semantics** — wrapping vs trapping
+- **Alignment** — struct padding differences
+- **Pointer semantics** — NULL, validity assumptions
+- **Endianness** — byte order for multi-byte values
+- **Floating-point behavior** — precision, NaN, infinity
+- **Bit operations** — shift, rotate, mask behaviors
+- **Memory ordering** — when relevant (locks, atomics)
+- **State transitions** — error handling paths
+- **Calling conventions** — when ABI-relevant
+
+### Porting Status Tracking
+
+```
+codergag_get_porting_status --project_id <id> --binary_id <bin> --function_address <addr> --language rust
+```
+→ Returns status (PENDING, IN_PROGRESS, COMPLETED, BLOCKED), progress percentage, issues
+
+## Available Tools
+
+### Binary Analysis
+| Tool | Purpose |
+|------|---------|
+| `codergag_index_binary` | Import binary into knowledge graph |
+| `codergag_get_cfg` | Get control flow graph for function |
+| `codergag_get_data_flow` | Get data flow analysis |
+| `codergag_get_call_graph` | Get call graph for binary |
+| `codergag_get_function_facts` | Get known facts about function |
+
+### Context & Memory
+| Tool | Purpose |
+|------|---------|
+| `codergag_prepare_reverse_engineering_context` | Assemble full context for task |
+| `codergag_record_re_hypothesis` | Record hypothesis with evidence |
+| `codergag_get_hypotheses` | Get competing hypotheses |
+| `codergag_get_evidence` | Get supporting/contradicting evidence |
+| `codergag_check_interception` | Detect LLM looping/hallucination |
+
+### Porting
+| Tool | Purpose |
+|------|---------|
+| `codergag_record_semantic_mapping` | Record source→target semantic mapping |
+| `codergag_record_porting_decision` | Record porting decision |
+| `codergag_record_known_difference` | Record known behavioral difference |
+| `codergag_get_semantic_mappings` | Get all mappings for function |
+| `codergag_get_porting_status` | Get porting progress |
+
+### Verification
+| Tool | Purpose |
+|------|---------|
+| `codergag_record_verification_test` | Record differential test result |
+| `codergag_get_verification_results` | Get all verification results |
+| `codergag_analyze_mismatch` | Analyze verification mismatch |
+| `codergag_get_mismatch_summary` | Get summary of all mismatches |
+
+### Legacy Tools (Still Available)
+| Tool | Purpose |
+|------|---------|
+| `codergag_get_callees` | Get called functions |
+| `codergag_get_callers` | Get calling functions |
+| `codergag_trace_call_path` | Trace call path |
+| `codergag_trace_data_flow` | Trace data flow |
+| `codergag_record_validation` | Record equivalence validation |
 
 ## Output Template
-
-Always produce this structure:
 
 ```markdown
 # Reverse Engineering Report: <binary_name>
 
 ## Summary
 - **Binary**: <path> (SHA256: <hash>)
-- **Tool**: RetDec + codeRAG semantic graph
-- **Target language**: <C | Python | Go | Rust | ...>
-- **Functions analyzed**: <count>
-- **Key hypotheses**: <count>
+- **Analysis Tool**: <retdec|ghidra|ida|binja>
+- **Target Language**: <C | Python | Go | Rust | ...>
+- **Functions Analyzed**: <count>
+- **Key Hypotheses**: <count>
+
+## Binary Metadata
+| Entity | Count |
+|--------|-------|
+| Functions | <n> |
+| Basic Blocks | <n> |
+| Strings | <n> |
+| Imports | <n> |
+| Exports | <n> |
 
 ## Architecture Overview
-<Use codergag_get_architecture to get a 1-paragraph summary>
+<Use codergag_get_architecture to get summary>
 
 ## Entry Points
-<List of functions matching main/init/handler/on_*/handle_*>
-
-## Call Graph (relevant subset)
-<For each entry point: get_callees with depth-limited traversal>
+<List of functions matching main/init/handler>
 
 ## Key Functions
 
 ### <function_name> (<address>)
-- **Decompiled C**:
-```c
-<decompiled code from DECOMPILED_AS edge>
-```
 - **Purpose** (hypothesis): <what this function does>
+- **CFG**: <basic blocks, branches>
 - **Callees**: <list>
 - **Callers**: <list>
-- **Data flow**: <codergag_trace_data_flow results>
+- **Data Flow**: <args, returns, globals>
 
-## Conversion to <target_language>
+### <another_function>
+...
 
-```<target_language>
-<converted code>
-```
+## Semantic Mappings
+| Binary Construct | Target | Notes |
+|----------------|--------|-------|
+| int32_t | i32 | Preserves wraparound |
+| malloc/free | Box/Drop | Memory safety |
+| ...
 
-## Hypotheses & Evidence
-| Hypothesis | Confidence | Evidence For | Evidence Against |
-|-----------|-----------|-------------|-----------------|
-| ... | ... | ... | ... |
+## Porting Status
+- **Overall Progress**: <n>%
+- **Critical Issues**: <n>
+- **Major Issues**: <n>
 
 ## Validation
-| Test | Status | Confidence |
-|------|--------|-----------|
-| ... | ... | ... |
+| Test | Status | Notes |
+|------|--------|-------|
+| test_<name> | PASSED/FAILED | ... |
+
+## Hypotheses & Evidence
+| Hypothesis | Confidence | Evidence For | Against |
+|-----------|-----------|-------------|---------|
+| ... | ... | ... | ... |
+
+## Behavioral Differences
+| Type | Severity | Impact | Resolution |
+|------|----------|--------|-----------|
+| signed_conversion | major | rare edge case | use wrapping_add |
 ```
 
-## Language Conversion Guide
+## Best Practices
 
-### C → Python
-- Preserve algorithmic logic
-- Replace manual memory management with Python constructs
-- Replace pointer arithmetic with list/dict operations where appropriate
-- Use `ctypes` for low-level operations if needed
-- Add type hints for clarity
-
-### C → Go
-- Map C types: `int` → `int`, `char*` → `string`, `void*` → `unsafe.Pointer`
-- Replace `malloc/free` with Go allocation
-- Use Go slices instead of pointer + length
-- Preserve control flow structure
-
-### C → Rust
-- Map C types to Rust equivalents
-- Use `unsafe` blocks for raw pointer operations
-- Replace `malloc/free` with `Box` and `Drop`
-- Use `enum` for state machines
-- Add proper error handling with `Result`
+1. **Start with entry points** — Use call graph to identify main/handler functions
+2. **Query lazily** — Don't compute CFG/data-flow for entire binary; request only what's needed
+3. **Record everything** — Hypotheses, mappings, decisions persist for future sessions
+4. **Validate early** — Run verification tests as soon as possible to catch semantic gaps
+5. **Track differences** — Known differences are better than silent divergence
+6. **Use confidence** — Always track confidence; low confidence should trigger more analysis
 
 ## Scripts
 
 This skill bundles a script in `scripts/`:
 
-- **`scripts/run_retdec.sh`** — Runs RetDec decompiler on a binary and outputs JSON. Usage: `./scripts/run_retdec.sh <binary_path> [output_dir]`. Tries local RetDec first, falls back to Docker.
-
-After running the script, parse the output JSON using the `RetDecAdapter` from `adapters/retdec/adapter.go`.
+- **`scripts/run_retdec.sh`** — Runs RetDec decompiler on a binary and outputs JSON
 
 ## Test Cases
 
-When evaluating this skill, use these prompts:
-
-1. **Binary analysis**: "Reverse engineer this firmware binary at /samples/firmware.bin — I need to understand the communication protocol between the main loop and the radio module."
-2. **Language conversion**: "Convert the decompiled function at 0x401238 into Rust. I have its RetDec output already imported into codeRAG project 'firmware_analysis'."
-3. **Hypothesis tracking**: "I reversed the USB descriptor handler in firmware.bin. The function at 0x405600 seems to validate device capabilities but I'm not sure about the control transfer flow. Record this as a hypothesis with the evidence from get_callers and get_callees."
-
-## Best Practices
-
-1. **Start broad, then narrow**: Use Architecture Overview to understand the binary at a high level before diving into specific functions
-2. **Always record hypotheses**: Even partial hypotheses help future analysis sessions resume quickly
-3. **Use evidence references**: Link observations to evidence nodes so the analysis is traceable
-4. **Validate early**: Use `find_related_tests` to find existing tests that can validate your reconstruction
-5. **Map to source when available**: If source code exists in the graph, use `codergag_find_related_code` to find equivalent functions
+1. **Binary analysis**: "Reverse engineer this firmware at /samples/firmware.bin — port the packet parser to Rust"
+2. **Language conversion**: "Convert the decompiled function at 0x401238 into Rust. I have it indexed in project 'firmware_analysis'."
+3. **Hypothesis tracking**: "I analyzed the USB handler at 0x405600. Record that it validates device capabilities with medium confidence based on the string references and the branch structure."
+4. **Verification**: "Run differential verification on my Rust port of parse_packet against the original binary"
 
 ## References
 
-- RetDec documentation: https://retdec.readthedocs.io/
-- codeRAG semantic tools: see codergag MCP handlers
-- Reverse engineering workflow: `internal/services/reverse.go`
+- RetDec: https://retdec.readthedocs.io/
+- codeRAG semantic tools: `internal/mcp/tools.go`
+- Reverse engineering service: `internal/services/reverse.go`
+- Binary analysis service: `internal/services/binary_analysis.go`
+- Porting service: `internal/services/porting.go`
+- Verification service: `internal/services/binary_verification.go`

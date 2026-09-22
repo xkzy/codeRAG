@@ -1524,3 +1524,243 @@ func (r *ToolRegistry) smallModelService() *services.SmallModelService {
 	app := r.application()
 	return app.SmallModel
 }
+
+// ---- binary analysis ----
+
+func (r *ToolRegistry) handleGetCFG(args map[string]any) (map[string]any, error) {
+	app := r.application()
+	cfg, err := app.BinaryAnalysis.GetCFG(
+		getString(args, "project_id"),
+		getString(args, "binary_id"),
+		getString(args, "function_address"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"function_addr": cfg.FunctionAddr,
+		"basic_blocks":  cfg.BasicBlocks,
+		"edges":         cfg.Edges,
+		"confidence":    cfg.Confidence,
+	}, nil
+}
+
+func (r *ToolRegistry) handleGetDataFlow(args map[string]any) (map[string]any, error) {
+	app := r.application()
+	df, err := app.BinaryAnalysis.GetDataFlow(
+		getString(args, "project_id"),
+		getString(args, "binary_id"),
+		getString(args, "function_address"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"function_addr":   df.FunctionAddr,
+		"arguments":      df.Arguments,
+		"return_values":  df.ReturnValues,
+		"global_reads":   df.GlobalReads,
+		"global_writes":  df.GlobalWrites,
+		"register_usage": df.RegisterUsage,
+	}, nil
+}
+
+func (r *ToolRegistry) handleGetCallGraph(args map[string]any) (map[string]any, error) {
+	app := r.application()
+	cg, err := app.BinaryAnalysis.GetCallGraph(
+		getString(args, "project_id"),
+		getString(args, "binary_id"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"binary_id":       cg.BinaryID,
+		"nodes":          cg.Nodes,
+		"edges":          cg.Edges,
+		"indirect_calls": cg.IndirectCalls,
+	}, nil
+}
+
+func (r *ToolRegistry) handleGetFunctionFacts(args map[string]any) (map[string]any, error) {
+	app := r.application()
+	return app.BinaryAnalysis.GetFunctionFacts(
+		getString(args, "project_id"),
+		getString(args, "binary_id"),
+		getString(args, "function_address"),
+	)
+}
+
+func (r *ToolRegistry) handlePrepareReverseEngineeringContext(args map[string]any) (map[string]any, error) {
+	app := r.application()
+	req := services.ReverseEngineeringContextRequest{
+		ProjectID:    getString(args, "project_id"),
+		Question:    getString(args, "question"),
+		Target:      getString(args, "target"),
+		IncludeCFG:  getBool(args, "include_cfg", true),
+		IncludeDataFlow: getBool(args, "include_dataflow", true),
+	}
+	ctx, err := app.BinaryAnalysis.PrepareReverseEngineeringContext(req)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"function_info":     ctx.FunctionInfo,
+		"facts":            ctx.Facts,
+		"hypotheses":       ctx.Hypotheses,
+		"callers":          ctx.Callers,
+		"callees":          ctx.Callees,
+		"confidence":       ctx.Confidence,
+	}, nil
+}
+
+// ---- porting ----
+
+func (r *ToolRegistry) handleRecordSemanticMapping(args map[string]any) (map[string]any, error) {
+	app := r.application()
+	mapping := services.SemanticMapping{
+		SourceConstruct:     getString(args, "source_construct"),
+		SemanticMeaning:     getString(args, "semantic_meaning"),
+		TargetConstruct:     getString(args, "target_construct"),
+		TranslationRule:    getString(args, "translation_rule"),
+		CompatibilityIssue: getString(args, "compatibility_issue"),
+		Confidence:         getFloat(args, "confidence", 0.5),
+		VerificationStatus:  "UNVERIFIED",
+	}
+	return app.Porting.RecordSemanticMapping(
+		getString(args, "project_id"),
+		getString(args, "binary_id"),
+		getString(args, "function_address"),
+		mapping,
+	)
+}
+
+func (r *ToolRegistry) handleRecordPortingDecision(args map[string]any) (map[string]any, error) {
+	app := r.application()
+	decision := services.PortingDecision{
+		OriginalConstruct: getString(args, "original_construct"),
+		TargetConstruct:   getString(args, "target_construct"),
+		Reason:          getString(args, "reason"),
+		Confidence:      getFloat(args, "confidence", 0.5),
+		Alternative:     "",
+	}
+	return app.Porting.RecordPortingDecision(
+		getString(args, "project_id"),
+		getString(args, "binary_id"),
+		getString(args, "function_address"),
+		getString(args, "language"),
+		decision,
+	)
+}
+
+func (r *ToolRegistry) handleRecordKnownDifference(args map[string]any) (map[string]any, error) {
+	app := r.application()
+	diff := services.KnownDifference{
+		DiffType:    getString(args, "diff_type"),
+		Description: getString(args, "description"),
+		Severity:    "minor",
+		Impact:      "",
+	}
+	return app.Porting.RecordKnownDifference(
+		getString(args, "project_id"),
+		getString(args, "binary_id"),
+		getString(args, "function_address"),
+		diff,
+	)
+}
+
+func (r *ToolRegistry) handleGetSemanticMappings(args map[string]any) (map[string]any, error) {
+	app := r.application()
+	mappings, err := app.Porting.GetSemanticMappings(
+		getString(args, "project_id"),
+		getString(args, "binary_id"),
+		getString(args, "function_address"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"mappings": mappings}, nil
+}
+
+func (r *ToolRegistry) handleGetPortingStatus(args map[string]any) (map[string]any, error) {
+	app := r.application()
+	status, err := app.Porting.GetPortingStatus(
+		getString(args, "project_id"),
+		getString(args, "binary_id"),
+		getString(args, "function_address"),
+		getString(args, "language"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"binary_id":      status.BinaryID,
+		"function_addr":  status.FunctionAddr,
+		"language":      status.Language,
+		"status":        status.Status,
+		"progress":      status.Progress,
+		"issues":        status.Issues,
+	}, nil
+}
+
+// ---- binary verification ----
+
+func (r *ToolRegistry) handleRecordVerificationTest(args map[string]any) (map[string]any, error) {
+	app := r.application()
+	testCase := services.VerificationTestCase{
+		Name:          getString(args, "test_name"),
+		Input:        toMap(args["input"]),
+		BinaryOutput: toMap(args["binary_output"]),
+		PortedOutput: toMap(args["ported_output"]),
+		Match:        getBool(args, "match", false),
+		Differences:  []services.OutputDifference{},
+	}
+	return app.BinaryVerification.RecordVerificationTest(
+		getString(args, "project_id"),
+		getString(args, "binary_id"),
+		getString(args, "function_address"),
+		getString(args, "test_name"),
+		testCase,
+	)
+}
+
+func (r *ToolRegistry) handleGetVerificationResults(args map[string]any) (map[string]any, error) {
+	app := r.application()
+	results, err := app.BinaryVerification.GetVerificationResults(
+		getString(args, "project_id"),
+		getString(args, "binary_id"),
+		getString(args, "function_address"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, len(results))
+	for i, r := range results {
+		out[i] = map[string]any{
+			"test_name":  r.TestName,
+			"status":    r.Status,
+			"match":     r.Match,
+			"differences": r.Differences,
+		}
+	}
+	return map[string]any{"results": out}, nil
+}
+
+func (r *ToolRegistry) handleAnalyzeMismatch(args map[string]any) (map[string]any, error) {
+	app := r.application()
+	return app.BinaryVerification.AnalyzeMismatch(
+		getString(args, "project_id"),
+		getString(args, "binary_id"),
+		getString(args, "function_address"),
+		getString(args, "test_id"),
+	)
+}
+
+func (r *ToolRegistry) handleGetMismatchSummary(args map[string]any) (map[string]any, error) {
+	app := r.application()
+	return app.BinaryVerification.GetMismatchSummary(
+		getString(args, "project_id"),
+		getString(args, "binary_id"),
+		getString(args, "function_address"),
+	)
+}

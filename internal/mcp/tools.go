@@ -344,6 +344,102 @@ func (r *ToolRegistry) registerAll() {
 		"method":             map[string]any{"type": "string", "description": "Validation method."},
 	}), append(requiredBase, "binary_function_id", "implementation_id", "test_name", "status", "confidence"), r.handleRecordValidation)
 
+	// binary analysis tools
+	r.register("get_cfg", "Binary RE: get control flow graph for a function", baseProps(map[string]any{
+		"binary_id":        map[string]any{"type": "string", "description": "Binary ID."},
+		"function_address": map[string]any{"type": "string", "description": "Function address."},
+	}), append(requiredBase, "binary_id", "function_address"), r.handleGetCFG)
+
+	r.register("get_data_flow", "Binary RE: get data flow analysis for a function", baseProps(map[string]any{
+		"binary_id":        map[string]any{"type": "string", "description": "Binary ID."},
+		"function_address": map[string]any{"type": "string", "description": "Function address."},
+	}), append(requiredBase, "binary_id", "function_address"), r.handleGetDataFlow)
+
+	r.register("get_call_graph", "Binary RE: get call graph for a binary", baseProps(map[string]any{
+		"binary_id": map[string]any{"type": "string", "description": "Binary ID."},
+	}), requiredBase, r.handleGetCallGraph)
+
+	r.register("get_function_facts", "Binary RE: get known facts about a function", baseProps(map[string]any{
+		"binary_id":        map[string]any{"type": "string", "description": "Binary ID."},
+		"function_address": map[string]any{"type": "string", "description": "Function address."},
+	}), append(requiredBase, "binary_id", "function_address"), r.handleGetFunctionFacts)
+
+	r.register("prepare_reverse_engineering_context", "Binary RE: prepare context for reverse engineering task", baseProps(map[string]any{
+		"question":  map[string]any{"type": "string", "description": "Question or task description."},
+		"target":    map[string]any{"type": "string", "description": "Target in format binary_id|function_address."},
+		"include_cfg":     map[string]any{"type": "boolean", "description": "Include CFG."},
+		"include_dataflow": map[string]any{"type": "boolean", "description": "Include data flow."},
+	}), append(requiredBase, "project_id", "question", "target"), r.handlePrepareReverseEngineeringContext)
+
+	// porting tools
+	r.register("record_semantic_mapping", "Porting: record source to target semantic mapping", baseProps(map[string]any{
+		"binary_id":            map[string]any{"type": "string", "description": "Binary ID."},
+		"function_address":      map[string]any{"type": "string", "description": "Function address."},
+		"source_construct":      map[string]any{"type": "string", "description": "Source construct."},
+		"semantic_meaning":      map[string]any{"type": "string", "description": "Semantic meaning."},
+		"target_construct":      map[string]any{"type": "string", "description": "Target construct."},
+		"translation_rule":     map[string]any{"type": "string", "description": "Translation rule."},
+		"compatibility_issue":    map[string]any{"type": "string", "description": "Compatibility issue."},
+		"confidence":            map[string]any{"type": "number", "description": "Confidence 0-1."},
+	}), append(requiredBase, "binary_id", "function_address", "source_construct", "target_construct"), r.handleRecordSemanticMapping)
+
+	r.register("record_porting_decision", "Porting: record a porting decision", baseProps(map[string]any{
+		"binary_id":            map[string]any{"type": "string", "description": "Binary ID."},
+		"function_address":      map[string]any{"type": "string", "description": "Function address."},
+		"language":             map[string]any{"type": "string", "description": "Target language."},
+		"original_construct":    map[string]any{"type": "string", "description": "Original construct."},
+		"target_construct":      map[string]any{"type": "string", "description": "Target construct."},
+		"reason":               map[string]any{"type": "string", "description": "Reason for decision."},
+		"confidence":           map[string]any{"type": "number", "description": "Confidence 0-1."},
+	}), append(requiredBase, "binary_id", "function_address", "language"), r.handleRecordPortingDecision)
+
+	r.register("record_known_difference", "Porting: record a known difference between binary and port", baseProps(map[string]any{
+		"binary_id":        map[string]any{"type": "string", "description": "Binary ID."},
+		"function_address": map[string]any{"type": "string", "description": "Function address."},
+		"diff_type":        map[string]any{"type": "string", "description": "Difference type."},
+		"description":      map[string]any{"type": "string", "description": "Description."},
+		"severity":         map[string]any{"type": "string", "description": "Severity: critical/major/minor."},
+		"impact":           map[string]any{"type": "string", "description": "Impact description."},
+	}), append(requiredBase, "binary_id", "function_address", "diff_type", "description"), r.handleRecordKnownDifference)
+
+	r.register("get_semantic_mappings", "Porting: get semantic mappings for a function", baseProps(map[string]any{
+		"binary_id":        map[string]any{"type": "string", "description": "Binary ID."},
+		"function_address": map[string]any{"type": "string", "description": "Function address."},
+	}), append(requiredBase, "binary_id", "function_address"), r.handleGetSemanticMappings)
+
+	r.register("get_porting_status", "Porting: get porting status for a function", baseProps(map[string]any{
+		"binary_id":        map[string]any{"type": "string", "description": "Binary ID."},
+		"function_address": map[string]any{"type": "string", "description": "Function address."},
+		"language":        map[string]any{"type": "string", "description": "Target language."},
+	}), append(requiredBase, "binary_id", "function_address", "language"), r.handleGetPortingStatus)
+
+	// binary verification tools
+	r.register("record_verification_test", "Verification: record a differential verification test", baseProps(map[string]any{
+		"binary_id":        map[string]any{"type": "string", "description": "Binary ID."},
+		"function_address": map[string]any{"type": "string", "description": "Function address."},
+		"test_name":        map[string]any{"type": "string", "description": "Test name."},
+		"input":           map[string]any{"type": "object", "description": "Test input."},
+		"binary_output":    map[string]any{"type": "object", "description": "Binary output."},
+		"ported_output":    map[string]any{"type": "object", "description": "Ported output."},
+		"match":            map[string]any{"type": "boolean", "description": "Whether outputs match."},
+	}), append(requiredBase, "binary_id", "function_address", "test_name"), r.handleRecordVerificationTest)
+
+	r.register("get_verification_results", "Verification: get verification results for a function", baseProps(map[string]any{
+		"binary_id":        map[string]any{"type": "string", "description": "Binary ID."},
+		"function_address": map[string]any{"type": "string", "description": "Function address."},
+	}), append(requiredBase, "binary_id", "function_address"), r.handleGetVerificationResults)
+
+	r.register("analyze_mismatch", "Verification: analyze a verification mismatch", baseProps(map[string]any{
+		"binary_id":        map[string]any{"type": "string", "description": "Binary ID."},
+		"function_address": map[string]any{"type": "string", "description": "Function address."},
+		"test_id":          map[string]any{"type": "string", "description": "Test ID."},
+	}), append(requiredBase, "binary_id", "function_address", "test_id"), r.handleAnalyzeMismatch)
+
+	r.register("get_mismatch_summary", "Verification: get summary of all mismatches", baseProps(map[string]any{
+		"binary_id":        map[string]any{"type": "string", "description": "Binary ID."},
+		"function_address": map[string]any{"type": "string", "description": "Function address."},
+	}), append(requiredBase, "binary_id", "function_address"), r.handleGetMismatchSummary)
+
 	r.register("rename_symbol", "CodeGraph semantic operation: rename symbol", baseProps(map[string]any{
 		"symbol_id": map[string]any{"type": "string", "description": "Symbol node ID."},
 		"name":      map[string]any{"type": "string", "description": "New name."},
@@ -1099,6 +1195,13 @@ func optsFromArgs(args map[string]any, ignore ...string) map[string]any {
 		}
 	}
 	return result
+}
+
+func toMap(v any) map[string]any {
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	return nil
 }
 
 func (r *ToolRegistry) resolveProjectID(args map[string]any) (string, *models.Node, error) {

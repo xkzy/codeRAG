@@ -1,6 +1,8 @@
 package services
 
 import (
+	"fmt"
+
 	"codergag/internal/graph"
 	"codergag/internal/ids"
 	"codergag/internal/models"
@@ -207,6 +209,197 @@ func (s *ReverseEngineeringService) ImportBinary(projectID string, data reverse.
 		"binary_id": data.BinaryID,
 		"functions": len(functions),
 		"tool":      data.Tool,
+	}, nil
+}
+
+func (s *ReverseEngineeringService) ImportBinaryMetadata(projectID string, data reverse.NormalizedBinary) (map[string]any, error) {
+	binaryNodes, err := s.graph.FindNodes("Binary", map[string]any{
+		"project_id": projectID,
+		"binary_id": data.BinaryID,
+	})
+	if err != nil || len(binaryNodes) == 0 {
+		return nil, fmt.Errorf("binary %s not found", data.BinaryID)
+	}
+	binaryID := binaryNodes[0].ID
+
+	stats := map[string]any{
+		"modules":  0,
+		"sections": 0,
+		"globals":  0,
+		"imports":  0,
+		"exports":  0,
+		"symbols":  0,
+		"types":    0,
+		"registers": 0,
+		"constants": 0,
+		"extapis":  0,
+	}
+
+	for _, m := range data.Modules {
+		modNode, err := s.graph.UpsertNode("Module", map[string]any{
+			"project_id": projectID,
+			"binary_id":  data.BinaryID,
+			"name":      m.Name,
+		}, map[string]any{
+			"name": m.Name,
+			"path": m.Path,
+		})
+		if err == nil {
+			s.graph.Link("CONTAINS", binaryID, modNode.ID, nil)
+			stats["modules"] = stats["modules"].(int) + 1
+		}
+	}
+
+	for _, sec := range data.Sections {
+		secNode, err := s.graph.UpsertNode("Section", map[string]any{
+			"project_id": projectID,
+			"binary_id":  data.BinaryID,
+			"name":      sec.Name,
+		}, map[string]any{
+			"name":      sec.Name,
+			"address":   sec.Address,
+			"size":      sec.Size,
+			"alignment": sec.Alignment,
+		})
+		if err == nil {
+			s.graph.Link("CONTAINS", binaryID, secNode.ID, nil)
+			stats["sections"] = stats["sections"].(int) + 1
+		}
+	}
+
+	for _, g := range data.Globals {
+		globalNode, err := s.graph.UpsertNode("Global", map[string]any{
+			"project_id": projectID,
+			"binary_id":  data.BinaryID,
+			"address":   g.Address,
+		}, map[string]any{
+			"address": g.Address,
+			"name":    g.Name,
+			"size":   g.Size,
+		})
+		if err == nil {
+			s.graph.Link("CONTAINS", binaryID, globalNode.ID, nil)
+			stats["globals"] = stats["globals"].(int) + 1
+		}
+	}
+
+	for _, imp := range data.Imports {
+		impNode, err := s.graph.UpsertNode("Import", map[string]any{
+			"project_id": projectID,
+			"binary_id":  data.BinaryID,
+			"name":      imp.Name,
+		}, map[string]any{
+			"name":    imp.Name,
+			"ordinal": imp.Ordinal,
+			"hint":   imp.Hint,
+		})
+		if err == nil {
+			s.graph.Link("CONTAINS", binaryID, impNode.ID, nil)
+			stats["imports"] = stats["imports"].(int) + 1
+		}
+	}
+
+	for _, exp := range data.Exports {
+		expNode, err := s.graph.UpsertNode("Export", map[string]any{
+			"project_id": projectID,
+			"binary_id":  data.BinaryID,
+			"name":      exp.Name,
+		}, map[string]any{
+			"name":    exp.Name,
+			"address": exp.Address,
+			"ordinal": exp.Ordinal,
+		})
+		if err == nil {
+			s.graph.Link("CONTAINS", binaryID, expNode.ID, nil)
+			stats["exports"] = stats["exports"].(int) + 1
+		}
+	}
+
+	for _, sym := range data.Symbols {
+		symNode, err := s.graph.UpsertNode("Symbol", map[string]any{
+			"project_id": projectID,
+			"binary_id":  data.BinaryID,
+			"address":   sym.Address,
+		}, map[string]any{
+			"address": sym.Address,
+			"name":    sym.Name,
+			"binding": sym.Binding,
+			"type":    sym.Type,
+		})
+		if err == nil {
+			s.graph.Link("CONTAINS", binaryID, symNode.ID, nil)
+			stats["symbols"] = stats["symbols"].(int) + 1
+		}
+	}
+
+	for _, t := range data.Types {
+		typeNode, err := s.graph.UpsertNode("Type", map[string]any{
+			"project_id": projectID,
+			"binary_id":  data.BinaryID,
+			"name":      t.Name,
+		}, map[string]any{
+			"name":   t.Name,
+			"size":   t.Size,
+			"fields": t.Fields,
+		})
+		if err == nil {
+			s.graph.Link("CONTAINS", binaryID, typeNode.ID, nil)
+			stats["types"] = stats["types"].(int) + 1
+		}
+	}
+
+	for _, reg := range data.Registers {
+		regNode, err := s.graph.UpsertNode("Register", map[string]any{
+			"project_id": projectID,
+			"binary_id":  data.BinaryID,
+			"name":      reg.Name,
+		}, map[string]any{
+			"name":      reg.Name,
+			"role":     reg.Role,
+			"width_bits": reg.WidthBits,
+		})
+		if err == nil {
+			s.graph.Link("CONTAINS", binaryID, regNode.ID, nil)
+			stats["registers"] = stats["registers"].(int) + 1
+		}
+	}
+
+	for _, c := range data.Constants {
+		constNode, err := s.graph.UpsertNode("Constant", map[string]any{
+			"project_id": projectID,
+			"binary_id":  data.BinaryID,
+			"value":    c.Value,
+		}, map[string]any{
+			"value":   c.Value,
+			"type":    c.Type,
+			"address": c.Address,
+		})
+		if err == nil {
+			s.graph.Link("CONTAINS", binaryID, constNode.ID, nil)
+			stats["constants"] = stats["constants"].(int) + 1
+		}
+	}
+
+	for _, api := range data.ExternalAPIs {
+		apiNode, err := s.graph.UpsertNode("ExternalAPI", map[string]any{
+			"project_id": projectID,
+			"binary_id":  data.BinaryID,
+			"name":      api.Name,
+		}, map[string]any{
+			"name":          api.Name,
+			"module":        api.Module,
+			"return_type":   api.ReturnType,
+			"argument_types": api.ArgumentTypes,
+		})
+		if err == nil {
+			s.graph.Link("CONTAINS", binaryID, apiNode.ID, nil)
+			stats["extapis"] = stats["extapis"].(int) + 1
+		}
+	}
+
+	return map[string]any{
+		"binary_id": data.BinaryID,
+		"stats":     stats,
 	}, nil
 }
 
