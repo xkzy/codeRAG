@@ -356,3 +356,95 @@ func (r *SQLGraphRepository) Close() error {
 	}
 	return nil
 }
+
+func (r *SQLGraphRepository) UpsertNodesBatch(kind string, items []NodeBatchItem) ([]*models.Node, error) {
+	if err := ValidateKind(kind); err != nil {
+		return nil, err
+	}
+	ctx := context.Background()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	results := make([]*models.Node, 0, len(items))
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	for _, item := range items {
+		props := make(map[string]any, len(item.Identity)+len(item.Properties)+3)
+		for k, v := range item.Identity {
+			props[k] = v
+		}
+		for k, v := range item.Properties {
+			props[k] = v
+		}
+		if _, ok := props["id"]; !ok {
+			props["id"] = models.NewID()
+		}
+		if _, ok := props["created_at"]; !ok {
+			props["created_at"] = now
+		}
+		if _, ok := props["updated_at"]; !ok {
+			props["updated_at"] = now
+		}
+		if _, ok := props["project_id"]; !ok {
+			props["project_id"] = item.Identity["project_id"]
+		}
+
+		node := &models.Node{
+			ID:         props["id"].(string),
+			Kind:       kind,
+			Properties: props,
+		}
+
+		propsJSON, err := json.Marshal(props)
+		if err != nil {
+			continue
+		}
+
+		_, err = r.db.ExecContext(ctx,
+			`INSERT INTO graph_nodes (id, kind, project_id, properties, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (id) DO UPDATE SET
+				kind = EXCLUDED.kind,
+				project_id = EXCLUDED.project_id,
+				properties = graph_nodes.properties::jsonb || EXCLUDED.properties::jsonb,
+				updated_at = EXCLUDED.updated_at`,
+			node.ID, kind, props["project_id"], propsJSON, props["created_at"], props["updated_at"])
+		if err != nil {
+			continue
+		}
+		results = append(results, node)
+	}
+	return results, nil
+}
+
+func (r *SQLGraphRepository) LinkBatch(items []EdgeBatchItem) ([]*models.Edge, error) {
+	ctx := context.Background()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	results := make([]*models.Edge, 0, len(items))
+
+	for _, item := range items {
+		if err := ValidateKind(item.Kind); err != nil {
+			continue
+		}
+		if item.Properties == nil {
+			item.Properties = make(map[string]any)
+		}
+		edge := models.NewEdge(item.Kind, item.FromID, item.ToID, item.Properties)
+		propsJSON, err := json.Marshal(item.Properties)
+		if err != nil {
+			continue
+		}
+		_, err = r.db.ExecContext(ctx,
+			`INSERT INTO graph_edges (id, kind, from_id, to_id, properties, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (id) DO NOTHING`,
+			edge.ID, item.Kind, item.FromID, item.ToID, propsJSON, time.Now().UTC().Format(time.RFC3339Nano))
+		if err != nil {
+			continue
+		}
+		results = append(results, edge)
+	}
+	return results, nil
+}

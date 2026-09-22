@@ -477,6 +477,43 @@ func (r *PersistentGraphRepository) linkInMemory(kind, fromID, toID string, prop
 	return r.mem.Link(kind, fromID, toID, properties)
 }
 
+func (r *PersistentGraphRepository) UpsertNodesBatch(kind string, items []NodeBatchItem) ([]*models.Node, error) {
+	if err := ValidateKind(kind); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.dbPath == "" {
+		return r.mem.UpsertNodesBatch(kind, items)
+	}
+	r.generation++
+	results := make([]*models.Node, 0, len(items))
+	for _, item := range items {
+		node, err := r.upsertNodeInMemory(kind, item.Identity, item.Properties)
+		if err == nil {
+			results = append(results, node)
+		}
+	}
+	return results, nil
+}
+
+func (r *PersistentGraphRepository) LinkBatch(items []EdgeBatchItem) ([]*models.Edge, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.dbPath == "" {
+		return r.mem.LinkBatch(items)
+	}
+	r.generation++
+	results := make([]*models.Edge, 0, len(items))
+	for _, item := range items {
+		edge, err := r.Link(item.Kind, item.FromID, item.ToID, item.Properties)
+		if err == nil {
+			results = append(results, edge)
+		}
+	}
+	return results, nil
+}
+
 func (r *PersistentGraphRepository) RemoveNodes(nodeIDs []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

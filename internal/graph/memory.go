@@ -261,3 +261,73 @@ func (r *MemoryGraphRepository) Generation() uint64 {
 }
 
 func (r *MemoryGraphRepository) Close() error { return nil }
+
+func (r *MemoryGraphRepository) UpsertNodesBatch(kind string, items []NodeBatchItem) ([]*models.Node, error) {
+	if err := ValidateKind(kind); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.generation++
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	results := make([]*models.Node, 0, len(items))
+
+	for _, item := range items {
+		existing := r.findNodesLocked(kind, item.Identity)
+		if len(existing) > 0 {
+			node := existing[0]
+			for k, v := range item.Properties {
+				node.Properties[k] = v
+			}
+			node.SetProperty("updated_at", node.Properties["updated_at"])
+			results = append(results, node)
+			continue
+		}
+
+		props := make(map[string]any, len(item.Identity)+len(item.Properties))
+		for k, v := range item.Identity {
+			props[k] = v
+		}
+		for k, v := range item.Properties {
+			props[k] = v
+		}
+		if _, ok := props["id"]; !ok {
+			props["id"] = r.next()
+		}
+		if _, ok := props["created_at"]; !ok {
+			props["created_at"] = now
+		}
+		if _, ok := props["project_id"]; !ok {
+			props["project_id"] = item.Identity["project_id"]
+		}
+		node := &models.Node{Kind: kind, Properties: props, ID: props["id"].(string)}
+		r.nodes[node.ID] = node
+		results = append(results, node)
+	}
+	return results, nil
+}
+
+func (r *MemoryGraphRepository) LinkBatch(items []EdgeBatchItem) ([]*models.Edge, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.generation++
+
+	results := make([]*models.Edge, 0, len(items))
+	for _, item := range items {
+		if err := ValidateKind(item.Kind); err != nil {
+			continue
+		}
+		for _, edge := range r.edges {
+			if edge.Kind == item.Kind && edge.FromID == item.FromID && edge.ToID == item.ToID && reflect.DeepEqual(edge.Properties, item.Properties) {
+				results = append(results, edge)
+				continue
+			}
+		}
+		edge := models.NewEdge(item.Kind, item.FromID, item.ToID, item.Properties)
+		edge.ID = r.next()
+		r.edges[edge.ID] = edge
+		results = append(results, edge)
+	}
+	return results, nil
+}

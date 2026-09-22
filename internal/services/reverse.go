@@ -41,168 +41,187 @@ func (s *ReverseEngineeringService) ImportBinary(projectID string, data reverse.
 		return nil, err
 	}
 
-	functions := make(map[string]*models.Node)
+	fnBatch := make([]graph.NodeBatchItem, 0, len(data.Functions))
 	for _, item := range data.Functions {
 		var sizeAny any
 		if item.Size != nil {
 			sizeAny = *item.Size
 		}
-		fn, err := s.graph.UpsertNode("BinaryFunction", map[string]any{
-			"project_id": projectID,
-			"binary_id":  data.BinaryID,
-			"address":    item.Address,
-		}, map[string]any{
-			"name":          item.Name,
-			"size":          sizeAny,
-			"analysis_tool": data.Tool,
-			"stable_id":     ids.BinFuncID(data.BinaryID, item.Address),
-		})
-		if err != nil {
-			continue
-		}
-		functions[item.Address] = fn
-		s.graph.Link("CONTAINS", binary.ID, fn.ID, nil)
-
-		if item.DecompilerOutput != "" {
-			// Truncate overly long decompiler output to prevent token explosion
-			// in downstream LLM analysis. The full output can be retrieved from
-			// the original source if needed.
-			outputText := truncate(item.DecompilerOutput, MaxDecompilerOutputLen)
-			outputNode, err := s.graph.UpsertNode("DecompilerOutput", map[string]any{
+		fnBatch = append(fnBatch, graph.NodeBatchItem{
+			Identity: map[string]any{
 				"project_id": projectID,
 				"binary_id":  data.BinaryID,
 				"address":    item.Address,
-			}, map[string]any{
-				"text":      outputText,
-				"tool":      data.Tool,
-				"truncated": len(outputText) < len(item.DecompilerOutput),
+			},
+			Properties: map[string]any{
+				"name":          item.Name,
+				"size":          sizeAny,
+				"analysis_tool": data.Tool,
+				"stable_id":     ids.BinFuncID(data.BinaryID, item.Address),
+			},
+		})
+	}
+
+	fnNodes, err := s.graph.UpsertNodesBatch("BinaryFunction", fnBatch)
+	if err != nil {
+		return nil, err
+	}
+
+	functions := make(map[string]*models.Node, len(fnNodes))
+	for i, node := range fnNodes {
+		addr := data.Functions[i].Address
+		functions[addr] = node
+		s.graph.Link("CONTAINS", binary.ID, node.ID, nil)
+	}
+
+	decompBatch := make([]graph.NodeBatchItem, 0)
+	stringBatch := make([]graph.NodeBatchItem, 0)
+	bbBatch := make([]graph.NodeBatchItem, 0)
+	var edgeBatch []graph.EdgeBatchItem
+
+	for i, item := range data.Functions {
+		fnID := fnNodes[i].ID
+		if item.DecompilerOutput != "" {
+			outputText := truncate(item.DecompilerOutput, MaxDecompilerOutputLen)
+			decompBatch = append(decompBatch, graph.NodeBatchItem{
+				Identity: map[string]any{
+					"project_id": projectID,
+					"binary_id":  data.BinaryID,
+					"address":    item.Address,
+				},
+				Properties: map[string]any{
+					"text":      outputText,
+					"tool":      data.Tool,
+					"truncated": len(outputText) < len(item.DecompilerOutput),
+				},
 			})
-			if err == nil {
-				s.graph.Link("DECOMPILED_AS", fn.ID, outputNode.ID, nil)
-			}
 		}
 
 		for _, text := range item.Strings {
-			strNode, err := s.graph.UpsertNode("String", map[string]any{
-				"project_id": projectID,
-				"value":      text,
-			}, map[string]any{
-				"value": text,
+			stringBatch = append(stringBatch, graph.NodeBatchItem{
+				Identity: map[string]any{
+					"project_id": projectID,
+					"value":      text,
+				},
+				Properties: map[string]any{
+					"value": text,
+				},
 			})
-			if err == nil {
-				s.graph.Link("REFERENCES", fn.ID, strNode.ID, map[string]any{"source": data.Tool})
+		}
+
+		for _, bb := range item.BasicBlocks {
+			bbStableID := ids.BasicBlockID(data.BinaryID, item.Address, bb.Address)
+			bbBatch = append(bbBatch, graph.NodeBatchItem{
+				Identity: map[string]any{
+					"project_id": projectID,
+					"binary_id":  data.BinaryID,
+					"address":    bb.Address,
+				},
+				Properties: map[string]any{
+					"stable_id": bbStableID,
+				},
+			})
+			edgeBatch = append(edgeBatch, graph.EdgeBatchItem{
+				Kind:   "CONTAINS",
+				FromID: fnID,
+				ToID:   bbStableID,
+			})
+		}
+	}
+
+	if len(decompBatch) > 0 {
+		decompNodes, err := s.graph.UpsertNodesBatch("DecompilerOutput", decompBatch)
+		if err == nil {
+			for i, dn := range decompNodes {
+				edgeBatch = append(edgeBatch, graph.EdgeBatchItem{
+					Kind:   "DECOMPILED_AS",
+					FromID: fnNodes[i].ID,
+					ToID:   dn.ID,
+				})
 			}
 		}
 	}
 
+	if len(stringBatch) > 0 {
+		stringNodes, err := s.graph.UpsertNodesBatch("String", stringBatch)
+		if err == nil {
+			si := 0
+			for i := range data.Functions {
+				for range data.Functions[i].Strings {
+					if si < len(stringNodes) {
+						edgeBatch = append(edgeBatch, graph.EdgeBatchItem{
+							Kind:       "REFERENCES",
+							FromID:     fnNodes[i].ID,
+							ToID:       stringNodes[si].ID,
+							Properties: map[string]any{"source": data.Tool},
+						})
+						si++
+					}
+				}
+			}
+		}
+	}
+
+	bbNodes, _ := s.graph.UpsertNodesBatch("BasicBlock", bbBatch)
+	bbIndex := 0
+
+	insnBatch := make([]graph.NodeBatchItem, 0)
 	for _, item := range data.Functions {
-		callerFn, ok := functions[item.Address]
-		if !ok {
+		for _, bb := range item.BasicBlocks {
+			for _, insn := range bb.Instruction {
+				insnStableID := ids.InstructionID(data.BinaryID, item.Address, bb.Address, insn.Address)
+				insnBatch = append(insnBatch, graph.NodeBatchItem{
+					Identity: map[string]any{
+						"project_id": projectID,
+						"binary_id":  data.BinaryID,
+						"address":    insn.Address,
+					},
+					Properties: map[string]any{
+						"mnemonic":  truncate(insn.Mnemonic, MaxInstructionFieldLen),
+						"operands":  truncate(insn.Operands, MaxInstructionFieldLen),
+						"stable_id": insnStableID,
+					},
+				})
+				if bbIndex < len(bbNodes) {
+					edgeBatch = append(edgeBatch, graph.EdgeBatchItem{
+						Kind:   "CONTAINS",
+						FromID: bbNodes[bbIndex].ID,
+						ToID:   insnStableID,
+					})
+				}
+				bbIndex++
+			}
+		}
+	}
+
+	if len(insnBatch) > 0 {
+		s.graph.UpsertNodesBatch("Instruction", insnBatch)
+	}
+
+	var callEdges []graph.EdgeBatchItem
+	for _, item := range data.Functions {
+		callerFn := functions[item.Address]
+		if callerFn == nil {
 			continue
 		}
 		for _, addr := range item.Calls {
 			if calleeFn, ok := functions[addr]; ok {
-				s.graph.Link("CALLS", callerFn.ID, calleeFn.ID, map[string]any{
-					"source": data.Tool, "confidence": 0.9,
+				callEdges = append(callEdges, graph.EdgeBatchItem{
+					Kind:       "CALLS",
+					FromID:     callerFn.ID,
+					ToID:       calleeFn.ID,
+					Properties: map[string]any{"source": data.Tool, "confidence": 0.9},
 				})
 			}
 		}
-		for _, bb := range item.BasicBlocks {
-			bbNode, err := s.graph.UpsertNode("BasicBlock", map[string]any{
-				"project_id": projectID,
-				"binary_id":  data.BinaryID,
-				"address":    bb.Address,
-			}, map[string]any{
-				"stable_id": ids.BasicBlockID(data.BinaryID, item.Address, bb.Address),
-			})
-			if err != nil {
-				continue
-			}
-			s.graph.Link("CONTAINS", callerFn.ID, bbNode.ID, nil)
-			for _, insn := range bb.Instruction {
-				insnNode, err := s.graph.UpsertNode("Instruction", map[string]any{
-					"project_id": projectID,
-					"binary_id":  data.BinaryID,
-					"address":    insn.Address,
-				}, map[string]any{
-					"mnemonic":  truncate(insn.Mnemonic, MaxInstructionFieldLen),
-					"operands":  truncate(insn.Operands, MaxInstructionFieldLen),
-					"stable_id": ids.InstructionID(data.BinaryID, item.Address, bb.Address, insn.Address),
-				})
-				if err != nil {
-					continue
-				}
-				s.graph.Link("CONTAINS", bbNode.ID, insnNode.ID, nil)
+	}
 
-				// Data references from instruction
-				for _, dref := range insn.DataRefs {
-					dataNode, err := s.graph.UpsertNode("BinaryData", map[string]any{
-						"project_id": projectID,
-						"binary_id":  data.BinaryID,
-						"address":    dref.ToAddress,
-					}, map[string]any{
-						"stable_id": ids.BasicBlockID(data.BinaryID, item.Address, dref.ToAddress),
-					})
-					if err == nil {
-						s.graph.Link("REFERENCES_DATA", insnNode.ID, dataNode.ID, map[string]any{
-							"type":   dref.Type,
-							"size":   dref.Size,
-							"source": data.Tool,
-						})
-					}
-				}
+	if len(callEdges) > 0 {
+		edgeBatch = append(edgeBatch, callEdges...)
+	}
 
-				// Code references from instruction
-				for _, cref := range insn.CodeRefs {
-					if targetFn, ok := functions[cref.ToAddress]; ok {
-						edgeType := "CALLS"
-						if cref.Type == "jmp" || cref.Type == "cond_jmp" {
-							edgeType = "BRANCHES_TO"
-						}
-						s.graph.Link(edgeType, insnNode.ID, targetFn.ID, map[string]any{
-							"type":   cref.Type,
-							"source": data.Tool,
-						})
-					}
-				}
-			}
-		}
-
-		// Function-level data references
-		for _, dref := range item.DataReferences {
-			if callerFn, ok := functions[item.Address]; ok {
-				dataNode, err := s.graph.UpsertNode("BinaryData", map[string]any{
-					"project_id": projectID,
-					"binary_id":  data.BinaryID,
-					"address":    dref.ToAddress,
-				}, map[string]any{
-					"stable_id": ids.BasicBlockID(data.BinaryID, item.Address, dref.ToAddress),
-				})
-				if err == nil {
-					s.graph.Link("REFERENCES_DATA", callerFn.ID, dataNode.ID, map[string]any{
-						"type":   dref.Type,
-						"size":   dref.Size,
-						"source": data.Tool,
-					})
-				}
-			}
-		}
-
-		// Function-level code references
-		for _, cref := range item.CodeReferences {
-			if callerFn, ok := functions[item.Address]; ok {
-				if targetFn, ok := functions[cref.ToAddress]; ok {
-					edgeType := "CALLS"
-					if cref.Type == "jmp" || cref.Type == "cond_jmp" {
-						edgeType = "BRANCHES_TO"
-					}
-					s.graph.Link(edgeType, callerFn.ID, targetFn.ID, map[string]any{
-						"type":   cref.Type,
-						"source": data.Tool,
-					})
-				}
-			}
-		}
+	if len(edgeBatch) > 0 {
+		s.graph.LinkBatch(edgeBatch)
 	}
 
 	return map[string]any{

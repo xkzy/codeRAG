@@ -32,6 +32,21 @@ type GraphRepository interface {
 	RemoveEdges(edgeIDs []string) error
 	QueryReadonly(query string, params map[string]any) ([]map[string]any, error)
 	Close() error
+
+	UpsertNodesBatch(kind string, items []NodeBatchItem) ([]*models.Node, error)
+	LinkBatch(edges []EdgeBatchItem) ([]*models.Edge, error)
+}
+
+type NodeBatchItem struct {
+	Identity   map[string]any
+	Properties map[string]any
+}
+
+type EdgeBatchItem struct {
+	Kind       string
+	FromID     string
+	ToID       string
+	Properties map[string]any
 }
 
 var ErrNotFound = errors.New("node not found")

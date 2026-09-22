@@ -352,6 +352,96 @@ func (r *MongoGraphRepository) QueryReadonly(query string, params map[string]any
 	return nil, errors.New("advanced queries are not enabled by this repository")
 }
 
+func (r *MongoGraphRepository) UpsertNodesBatch(kind string, items []NodeBatchItem) ([]*models.Node, error) {
+	if err := ValidateKind(kind); err != nil {
+		return nil, err
+	}
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	results := make([]*models.Node, 0, len(items))
+	for _, item := range items {
+		props := make(map[string]any, len(item.Identity)+len(item.Properties)+3)
+		for k, v := range item.Identity {
+			props[k] = v
+		}
+		for k, v := range item.Properties {
+			props[k] = v
+		}
+		if _, ok := props["id"]; !ok {
+			props["id"] = models.NewID()
+		}
+		if _, ok := props["created_at"]; !ok {
+			props["created_at"] = now
+		}
+		if _, ok := props["updated_at"]; !ok {
+			props["updated_at"] = now
+		}
+		if _, ok := props["project_id"]; !ok {
+			props["project_id"] = item.Identity["project_id"]
+		}
+
+		nodeID := props["id"].(string)
+		projID, _ := props["project_id"].(string)
+
+		mn := mongoNode{
+			ID:         nodeID,
+			Kind:       kind,
+			ProjectID:  projID,
+			Properties: toBSON(props),
+			CreatedAt:  props["created_at"].(string),
+			UpdatedAt:  props["updated_at"].(string),
+		}
+
+		_, err := r.nodes.InsertOne(ctx, mn)
+		if err != nil {
+			if strings.Contains(err.Error(), "E11000") {
+				continue
+			}
+			continue
+		}
+
+		results = append(results, &models.Node{
+			ID:         nodeID,
+			Kind:       kind,
+			Properties: props,
+		})
+	}
+	return results, nil
+}
+
+func (r *MongoGraphRepository) LinkBatch(items []EdgeBatchItem) ([]*models.Edge, error) {
+	ctx := context.Background()
+	results := make([]*models.Edge, 0, len(items))
+
+	for _, item := range items {
+		if err := ValidateKind(item.Kind); err != nil {
+			continue
+		}
+		if item.Properties == nil {
+			item.Properties = make(map[string]any)
+		}
+		edge := models.NewEdge(item.Kind, item.FromID, item.ToID, item.Properties)
+		men := mongoEdge{
+			ID:         edge.ID,
+			Kind:       item.Kind,
+			FromID:     item.FromID,
+			ToID:       item.ToID,
+			Properties: toBSON(item.Properties),
+			CreatedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+		}
+		_, err := r.edges.InsertOne(ctx, men)
+		if err != nil {
+			if strings.Contains(err.Error(), "E11000") {
+				continue
+			}
+			continue
+		}
+		results = append(results, edge)
+	}
+	return results, nil
+}
+
 func (r *MongoGraphRepository) Close() error {
 	if r.client != nil {
 		return r.client.Disconnect(context.Background())

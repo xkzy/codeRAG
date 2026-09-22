@@ -840,6 +840,12 @@ func (r *errGraphRepository) QueryReadonly(string, map[string]any) ([]map[string
 	return nil, nil
 }
 func (r *errGraphRepository) Close() error { return nil }
+func (r *errGraphRepository) UpsertNodesBatch(kind string, items []graph.NodeBatchItem) ([]*models.Node, error) {
+	return nil, nil
+}
+func (r *errGraphRepository) LinkBatch(items []graph.EdgeBatchItem) ([]*models.Edge, error) {
+	return nil, nil
+}
 
 func TestCircularDependencies_GraphError(t *testing.T) {
 	svc := NewAnalysisService(&errGraphRepository{findErr: errFoo3})
