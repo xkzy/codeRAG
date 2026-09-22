@@ -146,13 +146,12 @@ func testVSCodeClientWithServer(t *testing.T, response string) *VSCodeClient {
 						return
 					}
 					msg := string(buf[:n])
-					if strings.Contains(msg, "didOpen") || strings.Contains(msg, "didClose") {
-						continue
-					}
-					if _, err := c.Write([]byte(response)); err != nil {
+					if strings.Contains(msg, "textDocument/completion") || strings.Contains(msg, "textDocument/hover") || strings.Contains(msg, "textDocument/definition") || strings.Contains(msg, "textDocument/references") || strings.Contains(msg, "textDocument/documentSymbol") || strings.Contains(msg, "workspace/symbol") {
+						if _, err := c.Write([]byte(response)); err != nil {
+							return
+						}
 						return
 					}
-					return
 				}
 			}(conn)
 		}
@@ -294,13 +293,12 @@ func testJetBrainsClientWithServer(t *testing.T, response string) *JetBrainsClie
 						return
 					}
 					msg := string(buf[:n])
-					if strings.Contains(msg, "didOpen") || strings.Contains(msg, "didClose") {
-						continue
-					}
-					if _, err := c.Write([]byte(response)); err != nil {
+					if strings.Contains(msg, "textDocument/completion") || strings.Contains(msg, "textDocument/hover") || strings.Contains(msg, "textDocument/definition") || strings.Contains(msg, "textDocument/references") || strings.Contains(msg, "textDocument/documentSymbol") || strings.Contains(msg, "workspace/symbol") {
+						if _, err := c.Write([]byte(response)); err != nil {
+							return
+						}
 						return
 					}
-					return
 				}
 			}(conn)
 		}
