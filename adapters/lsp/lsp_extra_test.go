@@ -141,13 +141,18 @@ func testVSCodeClientWithServer(t *testing.T, response string) *VSCodeClient {
 				defer c.Close()
 				for {
 					buf := make([]byte, 4096)
-					_, err := c.Read(buf)
+					n, err := c.Read(buf)
 					if err != nil {
 						return
+					}
+					msg := string(buf[:n])
+					if strings.Contains(msg, "didOpen") || strings.Contains(msg, "didClose") {
+						continue
 					}
 					if _, err := c.Write([]byte(response)); err != nil {
 						return
 					}
+					return
 				}
 			}(conn)
 		}
@@ -284,13 +289,18 @@ func testJetBrainsClientWithServer(t *testing.T, response string) *JetBrainsClie
 				defer c.Close()
 				for {
 					buf := make([]byte, 4096)
-					_, err := c.Read(buf)
+					n, err := c.Read(buf)
 					if err != nil {
 						return
+					}
+					msg := string(buf[:n])
+					if strings.Contains(msg, "didOpen") || strings.Contains(msg, "didClose") {
+						continue
 					}
 					if _, err := c.Write([]byte(response)); err != nil {
 						return
 					}
+					return
 				}
 			}(conn)
 		}

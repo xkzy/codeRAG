@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="1.4.0"
+VERSION="1.5.0"
 REPO="xkzy/codeRAG"
 INSTALL_DIR="${HOME}/.codergag"
 CONFIG_DIR="${HOME}/.config/codergag"

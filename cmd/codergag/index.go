@@ -24,6 +24,7 @@ func runIndex(app *services.Application, args []string) int {
 	path := fs.String("path", "", "project path (defaults to current directory or first positional arg)")
 	ignore := fs.String("ignore", ".git,build,node_modules", "comma-separated ignore list")
 	skipGraphify := fs.Bool("skip-graphify", false, "skip the graphify community pass")
+	workers := fs.Int("workers", 0, "number of parallel workers (default: CPU cores)")
 	fs.Parse(args)
 
 	defer app.Graph.Close()
@@ -41,6 +42,10 @@ func runIndex(app *services.Application, args []string) int {
 		incr := *incremental
 		if *force {
 			incr = false
+		}
+		// Apply worker count to index service
+		if *workers > 0 {
+			app.Index.SetMaxWorkers(*workers)
 		}
 		res, err := app.Index.IndexRepository(pid, root, incr, ign, *skipGraphify)
 		if err != nil {

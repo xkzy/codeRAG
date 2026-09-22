@@ -10,21 +10,21 @@ import (
 	"strings"
 	"time"
 
+	"codergag/internal/models"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"codergag/internal/models"
 )
 
 // MongoGraphRepository implements GraphRepository on top of MongoDB.
 // Nodes and edges are stored in separate collections with full BSON documents,
 // enabling rich indexing and flexible querying.
 type MongoGraphRepository struct {
-	client     *mongo.Client
-	db         *mongo.Database
-	nodes      *mongo.Collection
-	edges      *mongo.Collection
-	projectID  string
+	client    *mongo.Client
+	db        *mongo.Database
+	nodes     *mongo.Collection
+	edges     *mongo.Collection
+	projectID string
 }
 
 // NewMongoGraphRepository connects to MongoDB and creates indexes.
@@ -86,21 +86,21 @@ func (r *MongoGraphRepository) createIndexes(ctx context.Context) error {
 }
 
 type mongoNode struct {
-	ID         string         `bson:"_id" json:"id"`
-	Kind       string         `bson:"kind" json:"kind"`
-	ProjectID  string         `bson:"project_id" json:"project_id"`
-	Properties bson.M         `bson:"properties" json:"properties"`
-	CreatedAt  string         `bson:"created_at" json:"created_at"`
-	UpdatedAt  string         `bson:"updated_at" json:"updated_at"`
+	ID         string `bson:"_id" json:"id"`
+	Kind       string `bson:"kind" json:"kind"`
+	ProjectID  string `bson:"project_id" json:"project_id"`
+	Properties bson.M `bson:"properties" json:"properties"`
+	CreatedAt  string `bson:"created_at" json:"created_at"`
+	UpdatedAt  string `bson:"updated_at" json:"updated_at"`
 }
 
 type mongoEdge struct {
-	ID         string         `bson:"_id" json:"id"`
-	Kind       string         `bson:"kind" json:"kind"`
-	FromID     string         `bson:"from_id" json:"from_id"`
-	ToID       string         `bson:"to_id" json:"to_id"`
-	Properties bson.M         `bson:"properties" json:"properties"`
-	CreatedAt  string         `bson:"created_at" json:"created_at"`
+	ID         string `bson:"_id" json:"id"`
+	Kind       string `bson:"kind" json:"kind"`
+	FromID     string `bson:"from_id" json:"from_id"`
+	ToID       string `bson:"to_id" json:"to_id"`
+	Properties bson.M `bson:"properties" json:"properties"`
+	CreatedAt  string `bson:"created_at" json:"created_at"`
 }
 
 func (r *MongoGraphRepository) UpsertNode(kind string, identity, properties map[string]any) (*models.Node, error) {
@@ -268,7 +268,7 @@ func (r *MongoGraphRepository) Neighbors(nodeID, edgeKind string, direction Dire
 
 	// Collect edge node IDs, then fetch neighbor nodes in batch
 	type edgeResult struct {
-		edge  *models.Edge
+		edge       *models.Edge
 		neighborID string
 	}
 	var edgeResults []edgeResult

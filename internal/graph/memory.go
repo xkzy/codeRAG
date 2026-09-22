@@ -11,10 +11,11 @@ import (
 )
 
 type MemoryGraphRepository struct {
-	mu    sync.RWMutex
-	nodes map[string]*models.Node
-	edges map[string]*models.Edge
-	next  func() string
+	mu         sync.RWMutex
+	nodes      map[string]*models.Node
+	edges      map[string]*models.Edge
+	next       func() string
+	generation uint64
 }
 
 func NewMemoryGraphRepository() *MemoryGraphRepository {
@@ -31,6 +32,7 @@ func (r *MemoryGraphRepository) UpsertNode(kind string, identity, properties map
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.generation++
 
 	existing := r.findNodesLocked(kind, identity)
 	if len(existing) > 0 {
@@ -108,6 +110,7 @@ func (r *MemoryGraphRepository) Link(kind, fromID, toID string, properties map[s
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.generation++
 
 	for _, edge := range r.edges {
 		if edge.Kind == kind && edge.FromID == fromID && edge.ToID == toID && reflect.DeepEqual(edge.Properties, properties) {
@@ -161,6 +164,7 @@ func (r *MemoryGraphRepository) Neighbors(nodeID, edgeKind string, direction Dir
 func (r *MemoryGraphRepository) RemoveNodes(nodeIDs []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.generation++
 
 	idSet := make(map[string]bool, len(nodeIDs))
 	for _, id := range nodeIDs {
@@ -211,6 +215,7 @@ func (r *MemoryGraphRepository) Counts() (nodes, edges map[string]int) {
 func (r *MemoryGraphRepository) RemoveEdges(edgeIDs []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.generation++
 	for _, id := range edgeIDs {
 		delete(r.edges, id)
 	}
@@ -231,6 +236,28 @@ func (r *MemoryGraphRepository) EdgeCount() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return len(r.edges)
+}
+
+func (r *MemoryGraphRepository) GraphSnapshot() (GraphSnapshot, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	nodes := make([]*models.Node, 0, len(r.nodes))
+	for _, node := range r.nodes {
+		nodes = append(nodes, cloneNode(node))
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	edges := make([]*models.Edge, 0, len(r.edges))
+	for _, edge := range r.edges {
+		edges = append(edges, cloneEdge(edge))
+	}
+	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
+	return GraphSnapshot{Nodes: nodes, Edges: edges, Generation: r.generation}, nil
+}
+
+func (r *MemoryGraphRepository) Generation() uint64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.generation
 }
 
 func (r *MemoryGraphRepository) Close() error { return nil }

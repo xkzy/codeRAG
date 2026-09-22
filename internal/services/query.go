@@ -3,6 +3,7 @@ package services
 import (
 	"sort"
 	"strings"
+	"sync"
 
 	"codergag/internal/graph"
 	"codergag/internal/models"
@@ -10,12 +11,15 @@ import (
 )
 
 type CodeGraphService struct {
-	graph  graph.GraphRepository
-	ranker search.Ranker
+	graph       graph.GraphRepository
+	ranker      search.Ranker
+	indexes     map[string]*graph.GraphQueryIndex
+	indexBuilds map[string]*graph.GraphQueryIndex
+	indexMu     sync.RWMutex
 }
 
 func NewCodeGraphService(g graph.GraphRepository) *CodeGraphService {
-	return &CodeGraphService{graph: g, ranker: search.NewBM25()}
+	return &CodeGraphService{graph: g, ranker: search.NewBM25(), indexes: make(map[string]*graph.GraphQueryIndex), indexBuilds: make(map[string]*graph.GraphQueryIndex)}
 }
 
 // NewCodeGraphServiceHybrid returns a service whose retrieval fuses BM25 keyword
@@ -24,8 +28,10 @@ func NewCodeGraphService(g graph.GraphRepository) *CodeGraphService {
 // keyword-only behavior for callers that do not need vector similarity.
 func NewCodeGraphServiceHybrid(g graph.GraphRepository) *CodeGraphService {
 	return &CodeGraphService{
-		graph:  g,
-		ranker: &search.Hybrid{Rankers: []search.Ranker{search.NewBM25(), search.NewVectorRanker()}},
+		graph:       g,
+		ranker:      &search.Hybrid{Rankers: []search.Ranker{search.NewBM25(), search.NewVectorRanker()}},
+		indexes:     make(map[string]*graph.GraphQueryIndex),
+		indexBuilds: make(map[string]*graph.GraphQueryIndex),
 	}
 }
 
@@ -76,9 +82,13 @@ func (s *CodeGraphService) SearchSemantic(projectID, query string, limit int, in
 func (s *CodeGraphService) corpus(projectID string, includeGenerated bool) ([]*models.Node, error) {
 	var nodes []*models.Node
 	for _, kind := range []string{"Function", "Class", "Struct", "Module", "SourceFile"} {
-		found, err := s.graph.FindNodes(kind, map[string]any{"project_id": projectID})
-		if err != nil {
-			return nil, err
+		found, ok := s.nodesByKind(projectID, kind)
+		if !ok {
+			var err error
+			found, err = s.graph.FindNodes(kind, map[string]any{"project_id": projectID})
+			if err != nil {
+				return nil, err
+			}
 		}
 		for _, n := range found {
 			if g, _ := n.Properties["generated"].(bool); g && !includeGenerated {
@@ -151,13 +161,204 @@ func (s *CodeGraphService) Function(projectID, name string) (map[string]any, err
 	return nil, nil
 }
 
-func (s *CodeGraphService) Related(nodeID, edgeKind string, direction string) ([]map[string]any, error) {
-	neighbors, err := s.graph.Neighbors(nodeID, edgeKind, graph.Direction(direction))
-	if err != nil {
-		return nil, err
+const (
+	defaultGraphDepth = 3
+	defaultGraphLimit = 1000
+	maxGraphDepth     = 64
+	maxGraphFanOut    = 1024
+	maxGraphNodes     = 10000
+	maxGraphEdges     = 100000
+)
+
+type graphTraversalLimits struct {
+	depth     int
+	nodes     int
+	edges     int
+	fanOut    int
+	truncated bool
+}
+
+func normalizeGraphTraversal(depth, limit int) graphTraversalLimits {
+	if depth < 0 {
+		depth = 0
 	}
+	if depth > maxGraphDepth {
+		depth = maxGraphDepth
+	}
+	if limit <= 0 {
+		limit = defaultGraphLimit
+	}
+	if limit > maxGraphNodes {
+		limit = maxGraphNodes
+	}
+	return graphTraversalLimits{depth: depth, nodes: limit, edges: maxGraphEdges, fanOut: maxGraphFanOut}
+}
+
+func sortEdgeNodes(items []graph.EdgeNode) {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Edge.ID != items[j].Edge.ID {
+			return items[i].Edge.ID < items[j].Edge.ID
+		}
+		return items[i].Node.ID < items[j].Node.ID
+	})
+}
+
+func boundedNeighbors(items []graph.EdgeNode, limits *graphTraversalLimits) []graph.EdgeNode {
+	sortEdgeNodes(items)
+	if len(items) > limits.fanOut {
+		limits.truncated = true
+		return items[:limits.fanOut]
+	}
+	return items
+}
+
+func traversalMetadata(limits graphTraversalLimits) map[string]any {
+	return map[string]any{
+		"truncated": limits.truncated,
+		"limits": map[string]any{
+			"depth":   limits.depth,
+			"nodes":   limits.nodes,
+			"edges":   limits.edges,
+			"fan_out": limits.fanOut,
+		},
+	}
+}
+
+// TraceDataFlow follows DATA_FLOW edges from sourceID toward targetID,
+// optionally including CALLS edges as stepping stones. Returns a path
+// of functions through which data flows.
+func (s *CodeGraphService) IndexFor(projectID string) *graph.GraphQueryIndex {
+	return s.indexFor(projectID)
+}
+
+func (s *CodeGraphService) InvalidateIndex(projectID string) {
+	if projectID == "" {
+		return
+	}
+	s.indexMu.RLock()
+	idx := s.indexes[projectID]
+	s.indexMu.RUnlock()
+	if idx != nil {
+		idx.Invalidate()
+	}
+}
+
+func (s *CodeGraphService) RefreshIndexAsync(projectID string) {
+	if projectID == "" {
+		return
+	}
+	go func() {
+		if idx := s.indexFor(projectID); idx != nil {
+			_ = idx.Refresh()
+		}
+	}()
+}
+
+func (s *CodeGraphService) indexFor(projectID string) *graph.GraphQueryIndex {
+	if projectID == "" {
+		return nil
+	}
+	if _, ok := s.graph.(graph.GraphGenerationProvider); !ok {
+		return nil
+	}
+	s.indexMu.RLock()
+	idx := s.indexes[projectID]
+	if idx != nil {
+		s.indexMu.RUnlock()
+		return idx
+	}
+	idx = s.indexBuilds[projectID]
+	s.indexMu.RUnlock()
+	if idx != nil {
+		return idx
+	}
+
+	idx = graph.NewGraphQueryIndex(s.graph, projectID)
+	s.indexMu.Lock()
+	if existing := s.indexes[projectID]; existing != nil {
+		s.indexMu.Unlock()
+		return existing
+	}
+	if building := s.indexBuilds[projectID]; building != nil {
+		s.indexMu.Unlock()
+		return building
+	}
+	s.indexBuilds[projectID] = idx
+	s.indexMu.Unlock()
+
+	if err := idx.Rebuild(); err != nil {
+		s.indexMu.Lock()
+		if s.indexBuilds[projectID] == idx {
+			delete(s.indexBuilds, projectID)
+		}
+		s.indexMu.Unlock()
+		return nil
+	}
+
+	s.indexMu.Lock()
+	delete(s.indexBuilds, projectID)
+	if existing := s.indexes[projectID]; existing != nil {
+		s.indexMu.Unlock()
+		return existing
+	}
+	s.indexes[projectID] = idx
+	s.indexMu.Unlock()
+	return idx
+}
+
+func (s *CodeGraphService) nodesByKind(projectID, kind string) ([]*models.Node, bool) {
+	idx := s.indexFor(projectID)
+	if idx == nil {
+		return nil, false
+	}
+	nodes := idx.NodesByKind(kind)
+	state, _ := idx.State()
+	if state != graph.IndexReady {
+		return nil, false
+	}
+	return nodes, true
+}
+
+func (s *CodeGraphService) neighbors(projectID, nodeID, edgeKind string, direction graph.Direction) ([]graph.EdgeNode, bool) {
+	idx := s.indexFor(projectID)
+	if idx == nil {
+		return nil, false
+	}
+	return idx.Neighbors(nodeID, edgeKind, direction)
+}
+
+func (s *CodeGraphService) projectForNode(nodeID string) string {
+	node, err := s.graph.GetNode(nodeID)
+	if err != nil {
+		return ""
+	}
+	return strProp(node, "project_id")
+}
+
+func (s *CodeGraphService) nodeNeighbors(nodeID, edgeKind string, direction graph.Direction) ([]graph.EdgeNode, bool) {
+	return s.neighbors(s.projectForNode(nodeID), nodeID, edgeKind, direction)
+}
+
+func (s *CodeGraphService) Related(nodeID, edgeKind string, direction string) ([]map[string]any, error) {
+	dir := graph.Direction(direction)
+	var neighbors []graph.EdgeNode
+	var ok bool
+	if projectID := s.projectForNode(nodeID); projectID != "" {
+		neighbors, ok = s.neighbors(projectID, nodeID, edgeKind, dir)
+	}
+	if !ok {
+		var err error
+		neighbors, err = s.graph.Neighbors(nodeID, edgeKind, dir)
+		if err != nil {
+			return nil, err
+		}
+	}
+	neighbors = boundedNeighbors(neighbors, &graphTraversalLimits{fanOut: maxGraphFanOut})
 	var results []map[string]any
 	for _, en := range neighbors {
+		if en.Node == nil || en.Edge == nil {
+			continue
+		}
 		row := Present(en.Node)
 		row["relationship"] = en.Edge.Kind
 		row["relationship_metadata"] = en.Edge.Properties
@@ -171,6 +372,7 @@ func (s *CodeGraphService) Impact(nodeID string, depth, limit int) (map[string]a
 	if err != nil {
 		return nil, err
 	}
+	limits := normalizeGraphTraversal(depth, limit)
 	seen := map[string]bool{nodeID: true}
 	type item struct {
 		id    string
@@ -183,33 +385,52 @@ func (s *CodeGraphService) Impact(nodeID string, depth, limit int) (map[string]a
 		"HAS_TYPE": true, "IMPORTS": true, "DEPENDS_ON": true,
 		"DATA_FLOW": true,
 	}
-	for len(queue) > 0 && len(impacts) < limit {
+	projectID := strProp(root, "project_id")
+	for len(queue) > 0 && len(impacts) < limits.nodes {
 		current := queue[0]
 		queue = queue[1:]
-		if current.level >= depth {
+		if current.level >= limits.depth {
 			continue
 		}
-		neighbors, err := s.graph.Neighbors(current.id, "", graph.DirIn)
-		if err != nil {
-			continue
+		var neighbors []graph.EdgeNode
+		var ok bool
+		if projectID != "" {
+			neighbors, ok = s.neighbors(projectID, current.id, "", graph.DirIn)
 		}
+		if !ok {
+			neighbors, _ = s.graph.Neighbors(current.id, "", graph.DirIn)
+		}
+		neighbors = boundedNeighbors(neighbors, &limits)
 		for _, en := range neighbors {
-			if inbound[en.Edge.Kind] && !seen[en.Node.ID] {
-				seen[en.Node.ID] = true
-				queue = append(queue, item{en.Node.ID, current.level + 1})
-				row := Present(en.Node)
-				row["via"] = en.Edge.Kind
-				row["distance"] = current.level + 1
-				impacts = append(impacts, row)
+			limits.edges--
+			if limits.edges < 0 {
+				limits.truncated = true
+				break
 			}
+			if en.Node == nil || en.Edge == nil || !inbound[en.Edge.Kind] || seen[en.Node.ID] {
+				continue
+			}
+			seen[en.Node.ID] = true
+			queue = append(queue, item{en.Node.ID, current.level + 1})
+			row := Present(en.Node)
+			row["via"] = en.Edge.Kind
+			row["distance"] = current.level + 1
+			impacts = append(impacts, row)
+		}
+		if limits.truncated && limits.edges < 0 {
+			break
 		}
 	}
-	return map[string]any{
+	result := map[string]any{
 		"subject":        Present(root),
 		"depth":          depth,
 		"affected_count": len(impacts),
 		"affected":       impacts,
-	}, nil
+	}
+	for key, value := range traversalMetadata(limits) {
+		result[key] = value
+	}
+	return result, nil
 }
 
 // TraceDataFlow follows DATA_FLOW edges from sourceID toward targetID,
@@ -245,11 +466,14 @@ func (s *CodeGraphService) TraceDataFlow(sourceID, targetID string, maxDepth int
 			continue
 		}
 		for _, kind := range edgeKinds {
-			neighbors, err := s.graph.Neighbors(current.id, kind, graph.DirOut)
-			if err != nil {
-				continue
+			neighbors, ok := s.nodeNeighbors(current.id, kind, graph.DirOut)
+			if !ok {
+				neighbors, _ = s.graph.Neighbors(current.id, kind, graph.DirOut)
 			}
 			for _, en := range neighbors {
+				if en.Node == nil {
+					continue
+				}
 				if !seen[en.Node.ID] {
 					seen[en.Node.ID] = true
 					kinds := append(append([]string{}, current.kinds...), kind)
@@ -286,11 +510,14 @@ func (s *CodeGraphService) Trace(sourceID, targetID string, maxDepth int) (map[s
 		if len(current.path) > maxDepth {
 			continue
 		}
-		neighbors, err := s.graph.Neighbors(current.id, "CALLS", graph.DirOut)
-		if err != nil {
-			continue
+		neighbors, ok := s.nodeNeighbors(current.id, "CALLS", graph.DirOut)
+		if !ok {
+			neighbors, _ = s.graph.Neighbors(current.id, "CALLS", graph.DirOut)
 		}
 		for _, en := range neighbors {
+			if en.Node == nil {
+				continue
+			}
 			if !seen[en.Node.ID] {
 				seen[en.Node.ID] = true
 				queue = append(queue, item{en.Node.ID, append(append([]string{}, current.path...), en.Node.ID)})
@@ -324,11 +551,14 @@ func (s *CodeGraphService) Hierarchy(nodeID, direction string, depth int) (map[s
 				continue
 			}
 			for _, edgeKind := range []string{"EXTENDS", "IMPLEMENTS"} {
-				nbrs, err := s.graph.Neighbors(cur.id, edgeKind, dir)
-				if err != nil {
-					continue
+				nbrs, ok := s.nodeNeighbors(cur.id, edgeKind, dir)
+				if !ok {
+					nbrs, _ = s.graph.Neighbors(cur.id, edgeKind, dir)
 				}
 				for _, en := range nbrs {
+					if en.Node == nil {
+						continue
+					}
 					if seen[en.Node.ID] {
 						continue
 					}

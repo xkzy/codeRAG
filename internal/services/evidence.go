@@ -173,3 +173,62 @@ func (s *EvidenceService) GetEvidence(subjectID string) ([]map[string]any, error
 	}
 	return results, nil
 }
+
+// SupersedeEvidence marks an evidence or hypothesis record as no longer current
+// (agentctx ctx_supersede equivalent) and creates a replacement record with
+// rationale. The old record is never deleted - superseded_at is set and the
+// new record references it via the supersedes property.
+func (s *EvidenceService) SupersedeEvidence(projectID, evidenceID, newBody, rationale, agent string) (map[string]any, error) {
+	old, err := s.graph.GetNode(evidenceID)
+	if err != nil || old == nil {
+		return nil, &ServiceError{Message: "evidence record not found"}
+	}
+	if old.Properties["project_id"] != projectID {
+		return nil, &ServiceError{Message: "evidence is absent or belongs to another project"}
+	}
+	if _, superseded := old.Properties["superseded_at"].(string); superseded {
+		return nil, &ServiceError{Message: "evidence is already superseded"}
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Mark the old record as superseded via its ID.
+	if _, err := s.graph.UpsertNode(old.Kind, map[string]any{"id": old.ID}, map[string]any{
+		"superseded_at": now,
+	}); err != nil {
+		return nil, err
+	}
+
+	// Create the replacement record.
+	newNode, err := s.graph.UpsertNode(old.Kind, map[string]any{
+		"project_id":  projectID,
+		"subject_id":  old.Properties["subject_id"],
+		"description": newBody,
+	}, map[string]any{
+		"state":               old.Properties["state"],
+		"confidence":          old.Properties["confidence"],
+		"agent":               agent,
+		"method":              "supersede",
+		"timestamp":           now,
+		"supersedes":          evidenceID,
+		"supersede_rationale": rationale,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Link old → new as SUPERSEDED_BY.
+	if _, err := s.graph.Link("SUPERSEDED_BY", old.ID, newNode.ID, map[string]any{
+		"at":        now,
+		"rationale": rationale,
+	}); err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"old_id":            old.ID,
+		"new_id":            newNode.ID,
+		"new":               Present(newNode),
+		"old_superseded_at": now,
+	}, nil
+}

@@ -282,6 +282,7 @@ type PersistentGraphRepository struct {
 	needsSave    bool
 	stamp        fileStamp
 	cachedState  *repoState
+	generation   uint64
 }
 
 type fileStamp struct {
@@ -356,6 +357,7 @@ func (r *PersistentGraphRepository) UpsertNode(kind string, identity, properties
 	if r.dbPath == "" {
 		return r.upsertNodeInMemory(kind, identity, properties)
 	}
+	r.generation++
 	st, err := r.readEffectiveStateLocked()
 	if err != nil {
 		return nil, err
@@ -430,6 +432,7 @@ func (r *PersistentGraphRepository) Link(kind, fromID, toID string, properties m
 	if r.dbPath == "" {
 		return r.linkInMemory(kind, fromID, toID, properties)
 	}
+	r.generation++
 	st, err := r.readEffectiveStateLocked()
 	if err != nil {
 		return nil, err
@@ -480,6 +483,7 @@ func (r *PersistentGraphRepository) RemoveNodes(nodeIDs []string) error {
 	if r.dbPath == "" {
 		return r.mem.RemoveNodes(nodeIDs)
 	}
+	r.generation++
 	idSet := make(map[string]bool, len(nodeIDs))
 	for _, id := range nodeIDs {
 		idSet[id] = true
@@ -504,6 +508,7 @@ func (r *PersistentGraphRepository) RemoveEdges(edgeIDs []string) error {
 	if r.dbPath == "" {
 		return r.mem.RemoveEdges(edgeIDs)
 	}
+	r.generation++
 	idSet := make(map[string]bool, len(edgeIDs))
 	for _, id := range edgeIDs {
 		idSet[id] = true
@@ -594,6 +599,9 @@ func (r *PersistentGraphRepository) readEffectiveStateLocked() (*repoState, erro
 		st := cloneRepoState(r.cachedState)
 		r.mergeJournalSnapshotLocked(st)
 		return st, nil
+	}
+	if r.cachedState != nil {
+		r.generation++
 	}
 	st, _, err := readState(r.dbPath)
 	if err != nil {
@@ -1006,7 +1014,7 @@ func parseAndExecuteQuery(query string, params map[string]any, st *repoState) ([
 
 func splitWhere(s string) []string {
 	var parts []string
-	// Handle both SQL AND and && 
+	// Handle both SQL AND and &&
 	re := regexp.MustCompile(`\s+AND\s+|\s*&&\s*`)
 	for _, part := range re.Split(s, -1) {
 		part = strings.TrimSpace(part)
@@ -1156,6 +1164,39 @@ func (r *PersistentGraphRepository) Close() error {
 	}
 	r.cache.clear()
 	return nil
+}
+
+func (r *PersistentGraphRepository) GraphSnapshot() (GraphSnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.dbPath == "" {
+		return r.mem.GraphSnapshot()
+	}
+	st, err := r.readEffectiveStateLocked()
+	if err != nil {
+		return GraphSnapshot{}, err
+	}
+	nodes := make([]*models.Node, 0, len(st.Nodes))
+	for id, gn := range st.Nodes {
+		nodes = append(nodes, &models.Node{ID: id, Kind: gn.Kind, Properties: cloneMap(gn.Properties)})
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	edges := make([]*models.Edge, 0, len(st.Edges))
+	for id, ge := range st.Edges {
+		edges = append(edges, &models.Edge{ID: id, Kind: ge.Kind, FromID: ge.FromID, ToID: ge.ToID, Properties: cloneMap(ge.Properties)})
+	}
+	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
+	return GraphSnapshot{Nodes: nodes, Edges: edges, Generation: r.generation}, nil
+}
+
+func (r *PersistentGraphRepository) Generation() uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.dbPath == "" {
+		return r.mem.Generation()
+	}
+	_, _ = r.readEffectiveStateLocked()
+	return r.generation
 }
 
 func (r *PersistentGraphRepository) Counts() (nodes, edges map[string]int) {

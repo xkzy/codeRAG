@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/lib/pq"
 	"codergag/internal/models"
+	_ "github.com/lib/pq"
 )
 
 // SQLGraphRepository implements GraphRepository on top of a SQL database

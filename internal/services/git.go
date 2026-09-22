@@ -649,3 +649,163 @@ func (s *GitService) suggestedReviewers(root string, hunks map[string][]lineRang
 	}
 	return out
 }
+
+// CompactChangeIntelligence returns a structured summary of working-tree
+// changes (git status + git diff), mapping changed files to affected
+// symbols. It replaces manual git diff + git status + symbol searching.
+func (s *GitService) CompactChangeIntelligence(projectID, base string) (map[string]any, error) {
+	projects, err := s.graph.FindNodes("Project", map[string]any{"id": projectID})
+	if err != nil || len(projects) == 0 {
+		return nil, &ServiceError{Message: "project not found"}
+	}
+	root, err := filepath.Abs(strProp(projects[0], "path"))
+	if err != nil || !dirExists(root) {
+		return nil, &ServiceError{Message: "project path is unavailable"}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
+		return nil, &ServiceError{Message: "not a git repository"}
+	}
+
+	statusOut, sErr := git(root, "status", "--porcelain")
+	if sErr != nil {
+		statusOut = ""
+	}
+	diffStat, _ := git(root, "diff", "--stat")
+	diffStatHead, _ := git(root, "diff", "HEAD", "--stat")
+	if base != "" {
+		diffStat, _ = git(root, "diff", base, "--stat")
+		diffStatHead, _ = git(root, "diff", base, "HEAD", "--stat")
+	}
+
+	type change struct {
+		Status    string `json:"status"`
+		Path      string `json:"path"`
+		Staged    bool   `json:"staged"`
+		Untracked bool   `json:"untracked"`
+	}
+	var changes []change
+	if statusOut != "" {
+		for _, line := range strings.Split(statusOut, "\n") {
+			if len(line) < 4 {
+				continue
+			}
+			staged := line[0] != ' ' && line[0] != '?'
+			unstaged := line[1] != ' ' && line[1] != '?'
+			if !staged && !unstaged {
+				continue
+			}
+			path := strings.TrimSpace(line[3:])
+			changes = append(changes, change{
+				Status:    strings.Join([]string{string(line[0]), string(line[1])}, ""),
+				Path:      path,
+				Staged:    staged,
+				Untracked: line[0] == '?',
+			})
+		}
+	}
+
+	projectPath := relPath(root, strProp(projects[0], "path"))
+	if projectPath == "" {
+		projectPath = "."
+	}
+
+	added, deleted, modified := 0, 0, 0
+	for _, c := range changes {
+		switch c.Status[0] {
+		case 'A':
+			added++
+		case 'D':
+			deleted++
+		default:
+			modified++
+		}
+	}
+
+	wholeFile := map[string]bool{}
+	for _, c := range changes {
+		if c.Status[0] == 'A' || c.Untracked {
+			wholeFile[c.Path] = true
+		}
+	}
+
+	changedSymbols := make([]map[string]any, 0)
+	filesChanged := make([]map[string]any, 0)
+	for _, c := range changes {
+		filesChanged = append(filesChanged, map[string]any{
+			"path":    c.Path,
+			"status":  c.Status,
+			"staged":  c.Staged,
+			"added":   c.Status[0] == 'A',
+			"deleted": c.Status[0] == 'D',
+		})
+		nodes, _ := s.graph.FindNodes("SourceFile", map[string]any{"project_id": projectID, "path": filepath.Join(root, c.Path)})
+		for _, n := range nodes {
+			if wholeFile[c.Path] {
+				changedSymbols = append(changedSymbols, map[string]any{
+					"file": relPath(root, strProp(n, "path")),
+					"note": "whole file changed — all symbols may be affected",
+				})
+				continue
+			}
+			fns, _ := s.graph.FindNodes("Function", map[string]any{"project_id": projectID, "path": strProp(n, "path")})
+			for _, fn := range fns {
+				changedSymbols = append(changedSymbols, map[string]any{
+					"file":   relPath(root, strProp(n, "path")),
+					"kind":   "Function",
+					"name":   strProp(fn, "name"),
+					"line":   fn.Properties["line_start"],
+					"status": c.Status,
+				})
+			}
+			types, _ := s.graph.FindNodes("Class", map[string]any{"project_id": projectID, "path": strProp(n, "path")})
+			if st, _ := s.graph.FindNodes("Struct", map[string]any{"project_id": projectID, "path": strProp(n, "path")}); len(st) > 0 {
+				types = append(types, st...)
+			}
+			for _, t := range types {
+				changedSymbols = append(changedSymbols, map[string]any{
+					"file":   relPath(root, strProp(n, "path")),
+					"kind":   t.Kind,
+					"name":   strProp(t, "name"),
+					"line":   t.Properties["line_start"],
+					"status": c.Status,
+				})
+			}
+		}
+	}
+	sort.Slice(changedSymbols, func(i, j int) bool {
+		a, b := changedSymbols[i]["file"].(string), changedSymbols[j]["file"].(string)
+		if a != b {
+			return a < b
+		}
+		ai, aj := changedSymbols[i]["line"].(int), changedSymbols[j]["line"].(int)
+		if ai != aj {
+			return ai < aj
+		}
+		return changedSymbols[i]["name"].(string) < changedSymbols[j]["name"].(string)
+	})
+
+	risk := riskLevel(len(filesChanged), 0, 0, 0, 0)
+	if modified > 10 {
+		risk = "high"
+	} else if modified > 3 {
+		risk = "medium"
+	}
+
+	return map[string]any{
+		"project_id":      projectID,
+		"root":            projectPath,
+		"changed_files":   filesChanged,
+		"changed_symbols": changedSymbols,
+		"file_count":      len(filesChanged),
+		"symbol_count":    len(changedSymbols),
+		"added_files":     added,
+		"deleted_files":   deleted,
+		"modified_files":  modified,
+		"total_changes":   len(changes),
+		"diff_stat":       diffStat,
+		"diff_stat_head":  diffStatHead,
+		"risk":            risk,
+		"has_changes":     len(changes) > 0,
+		"base":            base,
+	}, nil
+}

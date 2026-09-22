@@ -70,10 +70,44 @@ type Resolution struct {
 // remembered reference is still safe to act on.
 type ReferenceResolver struct {
 	graph graph.GraphRepository
+	idx   *graph.GraphQueryIndex
 }
 
 func NewReferenceResolver(g graph.GraphRepository) *ReferenceResolver {
 	return &ReferenceResolver{graph: g}
+}
+
+func NewReferenceResolverWithIndex(g graph.GraphRepository, idx *graph.GraphQueryIndex) *ReferenceResolver {
+	return &ReferenceResolver{graph: g, idx: idx}
+}
+
+func (r *ReferenceResolver) indexReady(projectID string) bool {
+	if projectID == "" || r.idx == nil || r.idx.ProjectID() != projectID {
+		return false
+	}
+	if err := r.idx.Refresh(); err != nil {
+		return false
+	}
+	state, _ := r.idx.State()
+	return state == graph.IndexReady
+}
+
+func (r *ReferenceResolver) nodesByKindFromIndex(projectID, kind string) ([]*models.Node, bool) {
+	if !r.indexReady(projectID) {
+		return nil, false
+	}
+	nodes := r.idx.NodesByKind(kind)
+	state, _ := r.idx.State()
+	if state != graph.IndexReady {
+		return nil, false
+	}
+	filtered := make([]*models.Node, 0, len(nodes))
+	for _, node := range nodes {
+		if node != nil && strProp(node, "project_id") == projectID {
+			filtered = append(filtered, node)
+		}
+	}
+	return filtered, true
 }
 
 var nodeKindOf = map[string]string{
@@ -81,7 +115,18 @@ var nodeKindOf = map[string]string{
 	ids.BinFunc: "BinaryFunction", ids.Binary: "Binary", ids.BB: "BasicBlock", ids.Insn: "Instruction",
 }
 
+func isSymbolKind(kind string) bool {
+	return kind == "Function" || kind == "Class" || kind == "Struct"
+}
+
 func (r *ReferenceResolver) projectRoot(projectID string) string {
+	if r.indexReady(projectID) {
+		if node, ok := r.idx.GetNode(projectID); ok && node.Kind == "Project" {
+			if path := strProp(node, "path"); path != "" {
+				return path
+			}
+		}
+	}
 	if ps, _ := r.graph.FindNodes("Project", map[string]any{"id": projectID}); len(ps) > 0 {
 		return strProp(ps[0], "path")
 	}
@@ -99,6 +144,15 @@ func (r *ReferenceResolver) Lookup(projectID, id string) (*models.Node, []string
 	if nk == "" {
 		return nil, nil
 	}
+	if r.indexReady(projectID) {
+		nodes, _ := r.idx.FindByStableID(id)
+		for _, node := range nodes {
+			if node != nil && node.Kind == nk && strProp(node, "project_id") == projectID {
+				return node, nil
+			}
+		}
+		return nil, r.suggestFromIndex(projectID, nk, id)
+	}
 	if n, _ := r.graph.FindNodes(nk, map[string]any{"project_id": projectID, "stable_id": id}); len(n) > 0 {
 		return n[0], nil
 	}
@@ -109,13 +163,28 @@ const maxSuggestions = 3
 
 func (r *ReferenceResolver) suggest(projectID, nodeKind, id string) []string {
 	nodes, _ := r.graph.FindNodes(nodeKind, map[string]any{"project_id": projectID})
+	return suggestFromNodes(nodes, id)
+}
+
+func (r *ReferenceResolver) suggestFromIndex(projectID, nodeKind, id string) []string {
+	nodes, ok := r.nodesByKindFromIndex(projectID, nodeKind)
+	if !ok {
+		return r.suggest(projectID, nodeKind, id)
+	}
+	return suggestFromNodes(nodes, id)
+}
+
+func suggestFromNodes(nodes []*models.Node, id string) []string {
 	type cand struct {
 		id string
 		d  int
 	}
 	var cands []cand
-	for _, n := range nodes {
-		sid := strProp(n, "stable_id")
+	for _, node := range nodes {
+		if node == nil {
+			continue
+		}
+		sid := strProp(node, "stable_id")
 		if sid == "" {
 			continue
 		}
@@ -410,12 +479,26 @@ func (r *ReferenceResolver) ResolveSourceSpan(projectID, file string, startLine,
 	span.RevisionID, _ = git(root, "rev-parse", "HEAD")
 
 	best, bestSize := "", 1<<30
+	useIndex := r.indexReady(projectID)
+	var byPath []*models.Node
+	if useIndex {
+		byPath, _ = r.idx.FindByPath(rel)
+	}
 	for _, kind := range []string{"Function", "Class", "Struct"} {
-		nodes, _ := r.graph.FindNodes(kind, map[string]any{"project_id": projectID, "rel_path": rel})
-		for _, n := range nodes {
-			s, e := intProp(n, "line_start"), intProp(n, "line_end")
+		var nodes []*models.Node
+		if useIndex {
+			for _, node := range byPath {
+				if node != nil && node.Kind == kind && strProp(node, "project_id") == projectID && strProp(node, "rel_path") == rel {
+					nodes = append(nodes, node)
+				}
+			}
+		} else {
+			nodes, _ = r.graph.FindNodes(kind, map[string]any{"project_id": projectID, "rel_path": rel})
+		}
+		for _, node := range nodes {
+			s, e := intProp(node, "line_start"), intProp(node, "line_end")
 			if s <= startLine && endLine <= e && e-s < bestSize {
-				best, bestSize = strProp(n, "stable_id"), e-s
+				best, bestSize = strProp(node, "stable_id"), e-s
 			}
 		}
 	}
@@ -435,20 +518,64 @@ type SymbolMatch struct {
 // ResolveSymbol is structural lookup: exact name (or Owner.name), never
 // similarity. An unknown name returns verified near matches, not a guess.
 func (r *ReferenceResolver) ResolveSymbol(projectID, name string) ([]SymbolMatch, []string) {
+	useIndex := r.indexReady(projectID)
+	if useIndex && !strings.Contains(name, ".") && name == strings.TrimSpace(name) {
+		nodes, _ := r.idx.FindByName(name)
+		var exact []*models.Node
+		for _, node := range nodes {
+			if node != nil && isSymbolKind(node.Kind) && strProp(node, "project_id") == projectID &&
+				(qualifiedLabel(node) == name || strProp(node, "name") == name) {
+				exact = append(exact, node)
+			}
+		}
+		if len(exact) > 0 {
+			out := make([]SymbolMatch, 0, len(exact))
+			for _, node := range exact {
+				label := qualifiedLabel(node)
+				out = append(out, SymbolMatch{ID: strProp(node, "stable_id"), Kind: node.Kind, Name: label,
+					Path: strProp(node, "rel_path"), Line: intProp(node, "line_start")})
+			}
+			sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+			return out, nil
+		}
+	}
+
+	var indexed [][]*models.Node
+	if useIndex {
+		indexed = make([][]*models.Node, 0, 3)
+		for _, kind := range []string{"Function", "Class", "Struct"} {
+			nodes, ok := r.nodesByKindFromIndex(projectID, kind)
+			if !ok {
+				useIndex = false
+				break
+			}
+			indexed = append(indexed, nodes)
+		}
+	}
+
 	var out []SymbolMatch
 	var names []string
 	seen := map[string]bool{}
-	for _, kind := range []string{"Function", "Class", "Struct"} {
-		nodes, _ := r.graph.FindNodes(kind, map[string]any{"project_id": projectID})
-		for _, n := range nodes {
-			label := qualifiedLabel(n)
+	kinds := []string{"Function", "Class", "Struct"}
+	for i, kind := range kinds {
+		var nodes []*models.Node
+		if useIndex {
+			nodes = indexed[i]
+		} else {
+			nodes, _ = r.graph.FindNodes(kind, map[string]any{"project_id": projectID})
+		}
+		for _, node := range nodes {
+			if node == nil {
+				continue
+			}
+			label := qualifiedLabel(node)
 			if !seen[label] {
 				seen[label] = true
 				names = append(names, label)
 			}
-			if label == name || strProp(n, "name") == name {
-				out = append(out, SymbolMatch{ID: strProp(n, "stable_id"), Kind: kind, Name: label,
-					Path: strProp(n, "rel_path"), Line: intProp(n, "line_start")})
+			if label == name || strProp(node, "name") == name {
+				out = append(out, SymbolMatch{ID: strProp(node, "stable_id"), Kind: kind, Name: label,
+					Path: strProp(node, "rel_path"), Line: intProp(node, "line_start")})
 			}
 		}
 	}

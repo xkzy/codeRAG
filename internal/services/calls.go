@@ -322,3 +322,148 @@ func (s *CodeIndexService) ResolveInheritance(projectID string) error {
 	}
 	return nil
 }
+
+// ResolveCallsWithIndex resolves calls using a pre-built index.
+func (s *CodeIndexService) ResolveCallsWithIndex(projectID string, idx *ResolverIndex) error {
+	byName := idx.ByName
+	byQualified := idx.ByQualified
+	pathOf := idx.PathOf
+
+	for _, caller := range idx.Functions {
+		desired := map[string]float64{}
+		for _, call := range strSlice(caller.Properties["calls"]) {
+			var targets []string
+			var conf float64
+			if strings.Contains(call, ".") {
+				if ids := byQualified[call]; len(ids) > 0 {
+					targets, conf = pickTargets(ids, pathOf, pathOf[caller.ID])
+					if len(targets) == 0 {
+						bare := call[strings.LastIndex(call, ".")+1:]
+						targets, conf = pickTargets(byName[bare], pathOf, pathOf[caller.ID])
+						conf *= 0.8
+					}
+				} else {
+					bare := call[strings.LastIndex(call, ".")+1:]
+					targets, conf = pickTargets(byName[bare], pathOf, pathOf[caller.ID])
+				}
+			} else {
+				targets, conf = pickTargets(byName[call], pathOf, pathOf[caller.ID])
+			}
+			for _, id := range targets {
+				if id != caller.ID && conf > desired[id] {
+					desired[id] = conf
+				}
+			}
+		}
+		s.syncEdges(caller.ID, "CALLS", desired)
+	}
+	return nil
+}
+
+// ResolveInheritanceWithIndex resolves inheritance using a pre-built index.
+func (s *CodeIndexService) ResolveInheritanceWithIndex(projectID string, idx *ResolverIndex) error {
+	files, err := s.graph.FindNodes("SourceFile", map[string]any{"project_id": projectID})
+	if err != nil {
+		return err
+	}
+	byName := map[string][]string{}
+	pathOf := map[string]string{}
+	var typeIDs []string
+	for _, n := range idx.TypesByName {
+		for _, id := range n {
+			if _, ok := idx.TypePaths[id]; ok {
+				byName[idx.TypeNames[id]] = append(byName[idx.TypeNames[id]], id)
+				pathOf[id] = idx.TypePaths[id]
+				typeIDs = append(typeIDs, id)
+			}
+		}
+	}
+	desired := map[string]map[string]map[string]float64{}
+	for _, f := range files {
+		path := strProp(f, "path")
+		for _, enc := range strSlice(f.Properties["type_relations"]) {
+			r, ok := decodeRelation(enc)
+			if !ok {
+				continue
+			}
+			subs, _ := pickTargets(byName[r.sub], pathOf, path)
+			supers, conf := pickTargets(byName[r.super], pathOf, path)
+			for _, sub := range subs {
+				for _, sup := range supers {
+					if sub == sup {
+						continue
+					}
+					if desired[sub] == nil {
+						desired[sub] = map[string]map[string]float64{}
+					}
+					if desired[sub][r.rel] == nil {
+						desired[sub][r.rel] = map[string]float64{}
+					}
+					if conf > desired[sub][r.rel][sup] {
+						desired[sub][r.rel][sup] = conf
+					}
+				}
+			}
+		}
+	}
+	for _, id := range typeIDs {
+		for _, rel := range []string{relExtends, relImplements} {
+			s.syncEdges(id, rel, desired[id][rel])
+		}
+	}
+	return nil
+}
+
+// ResolveDataFlowWithIndex resolves data flow using a pre-built index.
+func (s *CodeIndexService) ResolveDataFlowWithIndex(projectID string, idx *ResolverIndex) error {
+	fnOwner := idx.FnOwner
+	fnRefs := idx.FnRefs
+	ownerUses := idx.OwnerUses
+
+	for _, caller := range idx.Functions {
+		callerID := caller.ID
+		nbrs, _ := s.graph.Neighbors(callerID, "CALLS", graph.DirOut)
+		for _, en := range nbrs {
+			callee := en.Node.ID
+			calleeOwner := fnOwner[callee]
+			if calleeOwner == "" {
+				continue
+			}
+			callerUses := false
+			if fnOwner[callerID] == calleeOwner {
+				callerUses = true
+			}
+			if !callerUses {
+				for _, r := range fnRefs[callerID] {
+					if r == calleeOwner {
+						callerUses = true
+						break
+					}
+				}
+			}
+			if !callerUses {
+				callerOwner := fnOwner[callerID]
+				if ou, ok := ownerUses[callerOwner]; ok {
+					if ou[calleeOwner] {
+						callerUses = true
+					}
+				}
+			}
+			if !callerUses {
+				continue
+			}
+			existing, _ := s.graph.Neighbors(callee, "DATA_FLOW", graph.DirOut)
+			dup := false
+			for _, e := range existing {
+				if e.Node.ID == callerID {
+					dup = true
+					break
+				}
+			}
+			if !dup {
+				s.graph.Link("DATA_FLOW", callee, callerID, map[string]any{"source": "type-directed"})
+			}
+		}
+	}
+	return nil
+}

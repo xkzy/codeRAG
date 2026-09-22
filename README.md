@@ -8,21 +8,21 @@ A multi-level persistent cache (exact, semantic, tool result, analysis artifact)
 
 ## Comparison
 
-| Feature | **codeRAG** | **Sourcegraph** | **CodeGraph / GraphCode** | **FalkorDB** | **codegraph-mcp** |
-|---------|-------------|-----------------|---------------------------|--------------|-------------------|
-| **Type** | Local MCP server | Cloud SaaS + self-hosted | Research prototypes | Graph DB (Redis module) | MCP wrapper |
-| **Deployment** | Single binary, SQLite | Kubernetes/Docker | Python/Neo4j | Docker/Redis | Python MCP |
-| **Data locality** | 100% local | Cloud (code leaves) | Local | Local | Local |
-| **Languages** | 50+ (9 tree-sitter, 40+ regex, assembly) | 40+ | Varies | Any (Cypher) | Limited |
-| **Indexing** | Regex incremental | Precise (LSIF/SCIP) | AST-based | Manual | Regex |
-| **Graph** | In-memory + gob persist | Distributed | Neo4j/NetworkX | Property graph (Cypher) | NetworkX |
-| **MCP native** | ✅ Yes | ❌ (API only) | ❌ | ❌ | ✅ Yes |
-| **Binary analysis** | 6 adapters (Ghidra, IDA, etc.) | ❌ | ❌ | ❌ | ❌ |
-| **Privacy firewall** | ✅ Modes + pseudonyms | Enterprise only | ❌ | ❌ | ❌ |
-| **Cache** | Multi-level (L0/L1/L2/L3) | CDN | ❌ | Redis | ❌ |
-| **Benchmarking** | Deterministic (ref/refs/slice/ctx) | ❌ | ❌ | ❌ | ❌ |
-| **License** | MIT | Proprietary | MIT/Apache | AGPL | MIT |
-| **Cost** | Free | $49/user/mo | Free | Free/Commercial | Free |
+| Feature | **codeRAG** | **Sourcegraph** | **CodeGraph / GraphCode** | **FalkorDB** | **codegraph-mcp** | **cctx** |
+|---------|-------------|-----------------|---------------------------|--------------|-------------------|----------|
+| **Type** | Local MCP server | Cloud SaaS + self-hosted | Research prototypes | Graph DB (Redis module) | MCP wrapper | CLI context optimizer |
+| **Deployment** | Single binary, SQLite | Kubernetes/Docker | Python/Neo4j | Docker/Redis | Python MCP | Node.js/npm |
+| **Data locality** | 100% local | Cloud (code leaves) | Local | Local | Local | Local |
+| **Languages** | 50+ (9 tree-sitter, 40+ regex, assembly) | 40+ | Varies | Any (Cypher) | Limited | N/A |
+| **Indexing** | Regex incremental | Precise (LSIF/SCIP) | AST-based | Manual | Regex | Semantic codebase |
+| **Graph** | In-memory + gob persist | Distributed | Neo4j/NetworkX | Property graph (Cypher) | NetworkX | SQLite sessions |
+| **MCP native** | ✅ Yes | ❌ (API only) | ❌ | ❌ | ✅ Yes | ❌ (MCP via Ollama) |
+| **Binary analysis** | 6 adapters (Ghidra, IDA, etc.) | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Privacy firewall** | ✅ Modes + pseudonyms | Enterprise only | ❌ | ❌ | ❌ | ❌ |
+| **Cache** | Multi-level (L0/L1/L2/L3) | CDN | ❌ | Redis | ❌ | ❌ |
+| **Benchmarking** | Deterministic (ref/refs/slice/ctx) | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **License** | MIT | Proprietary | MIT/Apache | AGPL | MIT | MIT |
+| **Cost** | Free | $49/user/mo | Free | Free/Commercial | Free | Free |
 
 **Key differentiators for codeRAG:**
 - **Agent-native**: Built as MCP server from ground up
@@ -65,6 +65,8 @@ codergag ctx reset -yes
 ```
 
 `codergag setup --hooks` registers Claude Code hooks (`SessionStart`, `UserPromptSubmit`) that inject a token-budgeted digest: pinned records, decisions, and the records relevant to each prompt. Budgets are `context.session_budget` (default 1500) and `context.prompt_budget` (default 500) tokens. `codergag uninstall` removes only the hooks it added.
+
+**cctx CLI parity**: Every `cctx` command has a `codergag` equivalent — `setup`, `daemon`, `model`, `index`, `session`, `inject`, `register-instructions`, `doctor`, `config`, `mcp`, and `uninstall`. See `PLAN_CLI.md` for the full command mapping.
 
 ## Self-Update
 

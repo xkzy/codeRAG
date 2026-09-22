@@ -4,7 +4,7 @@ Each cycle gets its own spec (brainstorming), plan, and implementation. Order is
 
 | Cycle | Scope | Source | Status |
 |---|---|---|---|
-| 1 | Record store, `ctx` CLI, `SessionStart`/`UserPromptSubmit` hook injection, `setup --hooks` | agentctx | Spec + plan written (`specs/2026-09-20-context-store-and-hooks-design.md`, `plans/2026-09-20-context-store-and-hooks.md`), not executed |
+| 1 | Record store, `ctx` CLI, `SessionStart`/`UserPromptSubmit` hook injection, `setup --hooks` | agentctx | DONE (implemented, all tests pass) |
 | 2 | Tool-output compression: `PostToolUse` hook shrinking large Bash/Read/Grep/ls/test/web output (deterministic rules first) | cctx `compressor/*` | Not started |
 | 3 | Session checkpoints: `Stop`/`SessionEnd` capture, consolidation, knowledge extraction; deterministic capture with optional LLM | cctx `memory/*` + agentctx session-end extraction | Not started |
 | 4 | Local LLM summarizer: Ollama-backed summarizer and real `model`/`daemon` commands. Reverses the "no local LLM" decision in `PLAN_CLI.md`; needs its own design review | cctx `summarizer/*`, `ollama/*` | Not started |

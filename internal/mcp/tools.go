@@ -302,8 +302,8 @@ func (r *ToolRegistry) registerAll() {
 	}), append(requiredBase, "hypothesis"), r.handleRecordHypothesis)
 
 	r.register("check_interception", "Reverse engineering: auto-intercepts LLM loops and hallucinations by checking hypotheses/evidence for contradictions and repetition. Use after recording hypotheses or evidence to verify analysis integrity.", baseProps(map[string]any{
-		"project_id":  map[string]any{"type": "string", "description": "Project ID."},
-		"subject_id":  map[string]any{"type": "string", "description": "Subject node ID to check."},
+		"project_id": map[string]any{"type": "string", "description": "Project ID."},
+		"subject_id": map[string]any{"type": "string", "description": "Subject node ID to check."},
 	}), append(requiredBase, "project_id", "subject_id"), r.handleCheckInterception)
 
 	r.register("record_behavioral_equivalence", "Reverse engineering: record behavioral equivalence comparison result", baseProps(map[string]any{
@@ -442,10 +442,10 @@ func (r *ToolRegistry) registerAll() {
 	}), append(requiredBase, "document_id"), r.handleGetTableSchema)
 
 	r.register("query_table", "Tables: query rows from a CSV/TSV/XLSX document by column filter", baseProps(map[string]any{
-		"document_id": map[string]any{"type": "string", "description": "Document ID of a tabular document."},
+		"document_id":   map[string]any{"type": "string", "description": "Document ID of a tabular document."},
 		"filter_column": map[string]any{"type": "string", "description": "Column to filter on (optional, skip for all rows)."},
-		"filter_value": map[string]any{"type": "string", "description": "Value to match in the filter column."},
-		"limit": map[string]any{"type": "integer", "description": "Maximum rows to return."},
+		"filter_value":  map[string]any{"type": "string", "description": "Value to match in the filter column."},
+		"limit":         map[string]any{"type": "integer", "description": "Maximum rows to return."},
 	}), append(requiredBase, "document_id"), r.handleQueryTable)
 
 	r.register("export_table", "Tables: export query results to CSV", baseProps(map[string]any{
@@ -498,11 +498,9 @@ func (r *ToolRegistry) registerAll() {
 		"agent": map[string]any{"type": "string", "description": "Agent performing the audit."},
 	}), append(requiredBase, "path"), r.handleAuditSecuritySemgrep)
 
-	r.register("update_security_patterns", "Security: fetch latest vulnerability patterns from the online pattern database (independent of codeRAG releases)", baseProps(map[string]any{
-	}), requiredBase, r.handleUpdateSecurityPatterns)
+	r.register("update_security_patterns", "Security: fetch latest vulnerability patterns from the online pattern database (independent of codeRAG releases)", baseProps(map[string]any{}), requiredBase, r.handleUpdateSecurityPatterns)
 
-	r.register("pattern_update_status", "Security: check security pattern update status and last fetch time", baseProps(map[string]any{
-	}), requiredBase, r.handlePatternUpdateStatus)
+	r.register("pattern_update_status", "Security: check security pattern update status and last fetch time", baseProps(map[string]any{}), requiredBase, r.handlePatternUpdateStatus)
 
 	r.register("find_vulnerabilities", "Security: find findings by CWE", baseProps(map[string]any{
 		"cwe":   map[string]any{"type": "string", "description": "CWE identifier (e.g. CWE-78)."},
@@ -701,6 +699,25 @@ func (r *ToolRegistry) registerAll() {
 		"project_id": map[string]any{"type": "string", "description": "Project ID."},
 		"query":      map[string]any{"type": "string", "description": "Simple query to send to the small model."},
 	}), append(requiredBase, "query"), r.handleSmallAsk)
+
+	r.register("smart_read", "CodeGraph semantic operation: read file structure — returns language, size, symbols with line ranges, imports and exports without reading the full file", baseProps(map[string]any{
+		"file": map[string]any{"type": "string", "description": "Repo-relative or absolute file path."},
+	}), append(requiredBase, "file"), r.handleSmartRead)
+
+	r.register("analyze_project", "CodeGraph semantic operation: analyze project — file counts by language, symbol counts by kind, directory count, generated/stale stats", baseProps(map[string]any{}), requiredBase, r.handleAnalyzeProject)
+
+	r.register("compact_change_intelligence", "Git: structured working-tree change summary (git status + diff) with affected symbols and risk level. Pass base to diff against a ref instead of working tree.", baseProps(map[string]any{
+		"base": map[string]any{"type": "string", "description": "Base ref to diff against (default: working tree)."},
+	}), requiredBase, r.handleCompactChangeIntelligence)
+
+	r.register("supersede_evidence", "Evidence: mark an evidence or hypothesis record as no longer current and create a replacement with rationale. The old record is preserved with superseded_at set.", baseProps(map[string]any{
+		"evidence_id": map[string]any{"type": "string", "description": "ID of the evidence/hypothesis node to supersede."},
+		"new_body":    map[string]any{"type": "string", "description": "Body of the replacement record."},
+		"rationale":   map[string]any{"type": "string", "description": "Why the old record no longer holds."},
+		"agent":       map[string]any{"type": "string", "description": "Agent name for provenance."},
+	}), append(requiredBase, "evidence_id", "new_body", "rationale"), r.handleSupersedeEvidence)
+
+	r.register("project_profile", "CodeGraph semantic operation: project profile — record counts by kind, language breakdown, evidence summary, index freshness", baseProps(map[string]any{}), requiredBase, r.handleProjectProfile)
 }
 
 // paginatedTools return a single ranked or filtered list and accept offset/limit.
@@ -1047,7 +1064,7 @@ func (r *ToolRegistry) resolveStableRefs(projectID string, args map[string]any) 
 		if !ok || !ids.Looks(id) {
 			continue
 		}
-		n, cands := r.app.Refs.Lookup(projectID, id)
+		n, cands := r.resolverFor(projectID).Lookup(projectID, id)
 		if n == nil {
 			msg := fmt.Sprintf("%s: %s=%q does not exist in project %s", services.RefInvalid, key, id, projectID)
 			if len(cands) > 0 {

@@ -1,17 +1,18 @@
 # codeRAG Performance & Limitations
 
 ## Test Environment
-- **Repository**: codeRAG (381 Go files, 2,817 functions)
-- **Binary**: `/home/khing/.local/bin/codergag` (built with Go 1.26)
+- **Repository**: codeRAG (192 Go files, 818 functions)
+- **Binary**: `/tmp/codergag` (built with Go 1.26)
 - **Config**: Default (1GB memory limit, cache_nodes=1024, cache_edges=1024)
-- **Date**: 2026-09-20
+- **Date**: 2026-09-21
 
 ## Performance Metrics
 
 ### Indexing Performance
 | Project | Files | Functions | Structs | Index Time (est) |
 |---------|-------|-----------|---------|------------------|
-| real (codeRAG) | 381 | 2,817 | 305 | ~6.4s (first), ~1s (incremental) |
+| codeRAG (incremental) | 192 | 818 | N/A | ~3s |
+| codeRAG (first) | 192 | 818 | N/A | ~6s |
 | mcp-test | 122 | 1,155 | 232 | ~3s |
 | test-project | 131 | 1,241 | 243 | ~3s |
 
@@ -32,15 +33,15 @@
 | `find_symbol` | "Graphify" | 5+ | <100ms |
 | `query_graph` | SELECT * FROM Function LIMIT 10 | 10 | <100ms |
 
-### Eval Score (Project "real")
+### Eval Score (Project "project-26147bc196fc52e0")
 | Metric | Score | Details |
 |--------|-------|---------|
-| **Overall** | 87/100 | Grade: Good |
-| Retrieval | 0.83 | MRR 0.83, hit@1 75%, hit@5 91% |
-| Call Resolution | 1.00 | 4,535/4,550 in-project calls linked |
-| Inheritance | 1.00 | 27/27 relations have edges |
-| Freshness | 0.74 | 283/381 files match disk |
-| Memory Retention | N/A | No compacted memories |
+| **Overall** | 94/100 | Grade: GOOD |
+| Retrieval | 0.98 | MRR 0.98, hit@1 96%, hit@5 100%, hit@10 100% |
+| Call Resolution | 1.00 | 2,494/2,498 in-project calls linked |
+| Inheritance | 1.00 | 2/2 in-project relations have edges |
+| Freshness | 0.76 | 99/131 indexed files match disk |
+| Memory Retention | N/A | No compacted memories yet |
 
 ## Memory Improvements (v0.1.0)
 

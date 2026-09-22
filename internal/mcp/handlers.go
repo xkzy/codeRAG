@@ -223,7 +223,7 @@ func (r *ToolRegistry) handleResolveInstruction(args map[string]any) (map[string
 	if err != nil {
 		return nil, err
 	}
-	res := r.app.Refs.Resolve(projectID, id)
+	res := r.resolverFor(projectID).Resolve(projectID, id)
 	m, err := structToMap(res)
 	if err != nil {
 		return nil, err
@@ -240,7 +240,7 @@ func (r *ToolRegistry) handleResolveBasicBlock(args map[string]any) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	res := r.app.Refs.Resolve(projectID, id)
+	res := r.resolverFor(projectID).Resolve(projectID, id)
 	m, err := structToMap(res)
 	if err != nil {
 		return nil, err
@@ -978,22 +978,22 @@ func (r *ToolRegistry) handleUpdateSecurityPatterns(args map[string]any) (map[st
 		}, nil
 	}
 	return map[string]any{
-		"updated":      true,
+		"updated":       true,
 		"pattern_count": count,
 		"updated_at":    security.PatternsUpdateTime().Format(time.RFC3339),
-		"source":       security.PatternSource,
+		"source":        security.PatternSource,
 	}, nil
 }
 
 func (r *ToolRegistry) handlePatternUpdateStatus(args map[string]any) (map[string]any, error) {
 	lastUpdate := security.PatternsUpdateTime()
 	return map[string]any{
-		"pattern_count":  len(security.Patterns),
+		"pattern_count":   len(security.Patterns),
 		"last_updated":    lastUpdate.Format(time.RFC3339),
 		"up_to_date":      !security.ShouldUpdate(),
 		"next_update_due": lastUpdate.Add(security.PatternUpdateInterval).Format(time.RFC3339),
-		"source":         security.PatternSource,
-		"auto_update":    !lastUpdate.IsZero() || !security.ShouldUpdate(),
+		"source":          security.PatternSource,
+		"auto_update":     !lastUpdate.IsZero() || !security.ShouldUpdate(),
 	}, nil
 }
 
@@ -1461,6 +1461,29 @@ func (r *ToolRegistry) handlePrivacyPolicy(args map[string]any) (map[string]any,
 func (r *ToolRegistry) handleListLanguages(args map[string]any) (map[string]any, error) {
 	langs := services.SupportedLanguages()
 	return map[string]any{"count": len(langs), "languages": langs}, nil
+}
+
+func (r *ToolRegistry) handleSmartRead(args map[string]any) (map[string]any, error) {
+	return r.application().SmartRead(getString(args, "project_id"), getString(args, "file"))
+}
+
+func (r *ToolRegistry) handleAnalyzeProject(args map[string]any) (map[string]any, error) {
+	return r.application().AnalyzeProject(getString(args, "project_id"))
+}
+
+func (r *ToolRegistry) handleCompactChangeIntelligence(args map[string]any) (map[string]any, error) {
+	return r.application().Git.CompactChangeIntelligence(getString(args, "project_id"), getString(args, "base"))
+}
+
+func (r *ToolRegistry) handleSupersedeEvidence(args map[string]any) (map[string]any, error) {
+	return r.application().Evidence.SupersedeEvidence(
+		getString(args, "project_id"), getString(args, "evidence_id"),
+		getString(args, "new_body"), getString(args, "rationale"), getString(args, "agent"),
+	)
+}
+
+func (r *ToolRegistry) handleProjectProfile(args map[string]any) (map[string]any, error) {
+	return r.application().ProjectProfile(getString(args, "project_id"))
 }
 
 func (r *ToolRegistry) handleClassifyTask(args map[string]any) (map[string]any, error) {

@@ -115,19 +115,25 @@ func (r *ToolRegistry) RunMaintenanceNow() {
 	}
 }
 
+func (r *ToolRegistry) resolverFor(projectID string) *services.ReferenceResolver {
+	return r.app.ResolverFor(projectID)
+}
+
 func (r *ToolRegistry) handleResolveReference(args map[string]any) (map[string]any, error) {
-	return structToMap(r.app.Refs.Resolve(getString(args, "project_id"), getString(args, "id")))
+	return structToMap(r.resolverFor(getString(args, "project_id")).Resolve(getString(args, "project_id"), getString(args, "id")))
 }
 
 func (r *ToolRegistry) handleVerifyReference(args map[string]any) (map[string]any, error) {
-	return structToMap(r.app.Refs.Verify(getString(args, "project_id"), services.VerifyRequest{
+	projectID := getString(args, "project_id")
+	return structToMap(r.resolverFor(projectID).Verify(projectID, services.VerifyRequest{
 		ID: getString(args, "id"), ExpectedContentHash: getString(args, "expected_content_hash"),
 		ExpectedRevision: getString(args, "expected_revision"),
 	}))
 }
 
 func (r *ToolRegistry) handleResolveSourceSpan(args map[string]any) (map[string]any, error) {
-	span, symbol, err := r.app.Refs.ResolveSourceSpan(getString(args, "project_id"), getString(args, "file"),
+	projectID := getString(args, "project_id")
+	span, symbol, err := r.resolverFor(projectID).ResolveSourceSpan(projectID, getString(args, "file"),
 		getInt(args, "start_line", 1), getInt(args, "end_line", 0))
 	if err != nil {
 		return nil, err
@@ -144,7 +150,8 @@ func (r *ToolRegistry) handleResolveSourceSpan(args map[string]any) (map[string]
 }
 
 func (r *ToolRegistry) handleResolveSymbol(args map[string]any) (map[string]any, error) {
-	matches, sug := r.app.Refs.ResolveSymbol(getString(args, "project_id"), getString(args, "name"))
+	projectID := getString(args, "project_id")
+	matches, sug := r.resolverFor(projectID).ResolveSymbol(projectID, getString(args, "name"))
 	if len(matches) == 0 {
 		return map[string]any{"status": services.RefInvalid, "name": getString(args, "name"), "did_you_mean": sug}, nil
 	}

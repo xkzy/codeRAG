@@ -17,26 +17,26 @@ import (
 )
 
 type Application struct {
-	Graph     graph.GraphRepository
-	Cache     *cache.CacheManager
-	Events    *EventEngine
-	Index     *CodeIndexService
-	Code      *CodeGraphService
-	Evidence  *EvidenceService
-	Reverse   *ReverseEngineeringService
+	Graph      graph.GraphRepository
+	Cache      *cache.CacheManager
+	Events     *EventEngine
+	Index      *CodeIndexService
+	Code       *CodeGraphService
+	Evidence   *EvidenceService
+	Reverse    *ReverseEngineeringService
 	Analysis   *AnalysisService
-	Memory    *MemoryService
-	Documents *DocumentService
-	Git       *GitService
-	Security  *SecurityAuditService
-	Team      *TeamService
-	Refs      *ReferenceResolver
-	Tasks     *TaskService
-	Context   *ContextCompiler
-	Verify    *VerificationRunService
-	Privacy   *PrivacyService
-	Daemon    *Daemon
-	AntiLoop  *AntiLoopDetector
+	Memory     *MemoryService
+	Documents  *DocumentService
+	Git        *GitService
+	Security   *SecurityAuditService
+	Team       *TeamService
+	Refs       *ReferenceResolver
+	Tasks      *TaskService
+	Context    *ContextCompiler
+	Verify     *VerificationRunService
+	Privacy    *PrivacyService
+	Daemon     *Daemon
+	AntiLoop   *AntiLoopDetector
 	SmallModel *SmallModelService
 }
 
@@ -46,6 +46,18 @@ func (a *Application) IndexProgress(projectID string) *IndexProgress {
 		return nil
 	}
 	return a.Index.Progress(projectID)
+}
+
+func (a *Application) ResolverFor(projectID string) *ReferenceResolver {
+	if a == nil {
+		return nil
+	}
+	if a.Code != nil {
+		if idx := a.Code.IndexFor(projectID); idx != nil {
+			return NewReferenceResolverWithIndex(a.Graph, idx)
+		}
+	}
+	return a.Refs
 }
 
 func NewApplication(g graph.GraphRepository) *Application {

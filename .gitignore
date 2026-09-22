@@ -9,3 +9,7 @@ graphify-out/
 
 # backup files
 *.bak
+
+# working documents (plans, specs, benchmarks)
+Agent Update Prompt Optimize
+docs/superpowers/plans/2026-09-22-coderag-graph-resolution-optimize.md

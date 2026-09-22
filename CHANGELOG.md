@@ -2,6 +2,30 @@
 
 All notable changes to codeRAG are documented here.
 
+## [Unreleased]
+
+## [v1.5.0] — 2026-09-22
+
+### New Features
+
+#### cctx-mcp Port (3 tools)
+- `smart_read` — returns file structure (language, size, symbols, imports, exports) instead of full content; read the structure, not the whole file
+- `analyze_project` — compact JSON overview: file counts by language, symbol counts by kind, generated/stale stats, directory structure
+- `compact_change_intelligence` — working-tree git diff analysis with symbol mapping and risk level for changes between branches
+
+#### agentctx Port (2 tools)
+- `supersede_evidence` — mark evidence as superseded with replacement body and rationale, preserving provenance chain
+- `project_profile` — structured project overview: record counts by kind/language, evidence summary by state and confidence, index status
+
+### CI/CD
+
+- Added `.github/workflows/test.yml` — runs `go vet` and `go test -race` on push/PR across all four platforms (linux amd64/arm64, darwin amd64/arm64)
+- Added `Makefile` with standard targets: `build`, `build-static`, `test`, `vet`, `check`, `clean`, `install`, `docker-build`, `docker-run`
+- Fixed `Dockerfile` Go version: `1.23-alpine` → `1.25-alpine` to match `go.mod`
+
+### Installer
+- Updated to v1.5.0
+
 ## [v1.4.0] — 2026-09-21
 
 ### New Features
