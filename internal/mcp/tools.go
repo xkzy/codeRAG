@@ -718,6 +718,91 @@ func (r *ToolRegistry) registerAll() {
 	}), append(requiredBase, "evidence_id", "new_body", "rationale"), r.handleSupersedeEvidence)
 
 	r.register("project_profile", "CodeGraph semantic operation: project profile — record counts by kind, language breakdown, evidence summary, index freshness", baseProps(map[string]any{}), requiredBase, r.handleProjectProfile)
+
+	r.register("get_runtime_history", "Runtime: get recent runtime observations for a project", baseProps(map[string]any{
+		"limit": map[string]any{"type": "integer", "description": "Maximum observations to return (default 50)."},
+	}), requiredBase, r.handleGetRuntimeHistory)
+
+	r.register("find_observation", "Runtime: find a specific observation by ID", baseProps(map[string]any{
+		"observation_id": map[string]any{"type": "string", "description": "Observation ID to look up."},
+	}), append(requiredBase, "observation_id"), r.handleFindObservation)
+
+	r.register("get_related_observations", "Runtime: get observations related to a specific observation", baseProps(map[string]any{
+		"observation_id": map[string]any{"type": "string", "description": "Observation ID."},
+	}), append(requiredBase, "observation_id"), r.handleGetRelatedObservations)
+
+	r.register("get_function_observations", "Runtime: get observations emitted by or related to a function", baseProps(map[string]any{
+		"function_id": map[string]any{"type": "string", "description": "Function node ID."},
+	}), append(requiredBase, "function_id"), r.handleGetFunctionObservations)
+
+	r.register("get_log_template", "Runtime: get a log template by ID", baseProps(map[string]any{
+		"template_id": map[string]any{"type": "string", "description": "Log template ID."},
+	}), append(requiredBase, "template_id"), r.handleGetLogTemplate)
+
+	r.register("get_log_templates", "Runtime: get all log templates for a project", baseProps(map[string]any{}), requiredBase, r.handleGetLogTemplates)
+
+	r.register("explain_observation_relation", "Runtime: explain how an observation relates to a code entity", baseProps(map[string]any{
+		"observation_id": map[string]any{"type": "string", "description": "Observation ID."},
+		"target_id":     map[string]any{"type": "string", "description": "Target code entity ID."},
+	}), append(requiredBase, "observation_id", "target_id"), r.handleExplainObservationRelation)
+
+	r.register("capture_output", "Runtime: capture output for a session (for testing or manual injection)", baseProps(map[string]any{
+		"session_id": map[string]any{"type": "string", "description": "Session ID."},
+		"output":    map[string]any{"type": "string", "description": "Output text to capture."},
+		"stream":    map[string]any{"type": "string", "description": "Stream (stdout/stderr/log/build/debug)."},
+	}), append(requiredBase, "session_id", "output"), r.handleCaptureOutput)
+
+	r.register("register_runtime_session", "Runtime: register a session for runtime observation tracking", baseProps(map[string]any{
+		"session_id": map[string]any{"type": "string", "description": "Session ID."},
+		"task_id":   map[string]any{"type": "string", "description": "Optional task ID to associate."},
+	}), append(requiredBase, "session_id"), r.handleRegisterRuntimeSession)
+
+	r.register("unregister_runtime_session", "Runtime: unregister a session", baseProps(map[string]any{
+		"session_id": map[string]any{"type": "string", "description": "Session ID."},
+	}), append(requiredBase, "session_id"), r.handleUnregisterRuntimeSession)
+
+	r.register("get_runtime_stats", "Runtime: get runtime observation pipeline statistics", map[string]any{}, []string{}, r.handleGetRuntimeStats)
+
+	r.register("get_status_panel", "Status: get codeRAG status panel snapshot showing connection, session warmth, project context, cache hit rate, graph stats, active context, and background activity", baseProps(map[string]any{}), requiredBase, r.handleGetStatusPanel)
+
+	r.register("get_session_warmth", "Status: get session warmth details including context reuse percentage, freshness metrics, and what makes the session warm or cold", baseProps(map[string]any{}), requiredBase, r.handleGetSessionWarmth)
+
+	r.register("get_symbol_provenance", "Status: get provenance information for a symbol showing why it is in the current context (task reference, session activity, graph relationship)", baseProps(map[string]any{
+		"symbol": map[string]any{"type": "string", "description": "Symbol name to get provenance for."},
+	}), append(requiredBase, "symbol"), r.handleGetSymbolProvenance)
+
+	r.register("get_active_context", "Status: get currently active files, symbols, recent events and errors in the session", map[string]any{}, []string{}, r.handleGetActiveContext)
+
+	r.register("emit_status_event", "Status: emit a status event for tracking (use for agent integration)", baseProps(map[string]any{
+		"event_kind": map[string]any{"type": "string", "description": "Event kind (AgentStarted, SessionStarted, FileOpened, SymbolReferenced, etc.)."},
+		"session_id": map[string]any{"type": "string", "description": "Session ID."},
+		"message":    map[string]any{"type": "string", "description": "Optional message."},
+		"path":       map[string]any{"type": "string", "description": "Optional file path."},
+		"symbol":     map[string]any{"type": "string", "description": "Optional symbol name."},
+	}), append(requiredBase, "event_kind"), r.handleEmitStatusEvent)
+
+	r.register("get_background_activity", "Status: get current background activity including indexing, graph updates, observation correlation, and cache operations", map[string]any{}, []string{}, r.handleGetBackgroundActivity)
+
+	r.register("start_session", "Session: start a new session with optional warm start from previous context", baseProps(map[string]any{
+		"project_root": map[string]any{"type": "string", "description": "Project root directory path."},
+	}), requiredBase, r.handleStartSession)
+
+	r.register("end_session", "Session: end the current session", baseProps(map[string]any{}), requiredBase, r.handleEndSession)
+
+	r.register("get_session", "Session: get information about the current session including warmth, context reuse, and metrics", baseProps(map[string]any{}), requiredBase, r.handleGetSession)
+
+	r.register("get_warm_start_context", "Session: get warm start context details including hot files, functions, and recent activity", baseProps(map[string]any{}), requiredBase, r.handleGetWarmStartContext)
+
+	r.register("get_project_snapshot", "Snapshot: get a snapshot of the project structure including modules, entry points, and dependencies", baseProps(map[string]any{}), requiredBase, r.handleGetProjectSnapshot)
+
+	r.register("resolve_context", "Context: resolve context using hierarchical approach (exact -> relationships -> task -> subsystem -> hot)", baseProps(map[string]any{
+		"symbol":   map[string]any{"type": "string", "description": "Symbol name to resolve."},
+		"file":     map[string]any{"type": "string", "description": "File path to resolve."},
+		"line":     map[string]any{"type": "integer", "description": "Line number."},
+		"task_id":  map[string]any{"type": "string", "description": "Task ID for task context resolution."},
+	}), requiredBase, r.handleResolveContext)
+
+	r.register("create_snapshot", "Snapshot: create and persist a project snapshot", baseProps(map[string]any{}), requiredBase, r.handleCreateSnapshot)
 }
 
 // paginatedTools return a single ranked or filtered list and accept offset/limit.

@@ -17,27 +17,31 @@ import (
 )
 
 type Application struct {
-	Graph      graph.GraphRepository
-	Cache      *cache.CacheManager
-	Events     *EventEngine
-	Index      *CodeIndexService
-	Code       *CodeGraphService
-	Evidence   *EvidenceService
-	Reverse    *ReverseEngineeringService
-	Analysis   *AnalysisService
-	Memory     *MemoryService
-	Documents  *DocumentService
-	Git        *GitService
-	Security   *SecurityAuditService
-	Team       *TeamService
-	Refs       *ReferenceResolver
-	Tasks      *TaskService
-	Context    *ContextCompiler
-	Verify     *VerificationRunService
-	Privacy    *PrivacyService
-	Daemon     *Daemon
-	AntiLoop   *AntiLoopDetector
-	SmallModel *SmallModelService
+	Graph       graph.GraphRepository
+	Cache       *cache.CacheManager
+	Events      *EventEngine
+	Index       *CodeIndexService
+	Code        *CodeGraphService
+	Evidence    *EvidenceService
+	Reverse     *ReverseEngineeringService
+	Analysis    *AnalysisService
+	Memory      *MemoryService
+	Documents   *DocumentService
+	Git         *GitService
+	Security    *SecurityAuditService
+	Team        *TeamService
+	Refs        *ReferenceResolver
+	Tasks       *TaskService
+	Context     *ContextCompiler
+	Verify      *VerificationRunService
+	Privacy     *PrivacyService
+	Runtime     *RuntimeService
+	Daemon      *Daemon
+	AntiLoop    *AntiLoopDetector
+	SmallModel  *SmallModelService
+	StatusPanel *StatusPanel
+	Session     *SessionManager
+	Snapshot    *SnapshotManager
 }
 
 // IndexProgress returns the most recent index-progress snapshot for a project.
@@ -58,6 +62,13 @@ func (a *Application) ResolverFor(projectID string) *ReferenceResolver {
 		}
 	}
 	return a.Refs
+}
+
+func (a *Application) BuildProjectSnapshot(projectID string) (*ProjectSnapshot, error) {
+	if a.Snapshot == nil {
+		return nil, fmt.Errorf("snapshot manager not initialized")
+	}
+	return a.Snapshot.CreateSnapshot(projectID, a)
 }
 
 func NewApplication(g graph.GraphRepository) *Application {
@@ -81,9 +92,13 @@ func NewApplication(g graph.GraphRepository) *Application {
 		Tasks:     NewTaskService(g, refs, ev),
 		Verify:    NewVerificationRunService(DefaultVerificationConfig(), g),
 		Privacy:   NewPrivacyService(g),
+		Runtime:   NewRuntimeService(g),
 	}
+	app.StatusPanel = NewStatusPanel(app)
 	app.Context = NewContextCompiler(app)
 	app.AntiLoop = NewAntiLoopDetector(g)
+	app.Snapshot = NewSnapshotManager(g)
+	app.Session = NewSessionManager(g, app)
 	return app
 }
 

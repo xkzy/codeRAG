@@ -117,3 +117,162 @@ type EquivalenceDifference struct {
 	Description string
 	Severity    string // "critical", "major", "minor"
 }
+
+// ObservationSource identifies the kind of process/tool that produced output.
+type ObservationSource string
+
+const (
+	SourceAgent        ObservationSource = "AGENT"
+	SourceProcess      ObservationSource = "PROCESS"
+	SourceApplication   ObservationSource = "APPLICATION"
+	SourceCompiler     ObservationSource = "COMPILER"
+	SourceTest         ObservationSource = "TEST"
+	SourceDebugger     ObservationSource = "DEBUGGER"
+	SourceGDB          ObservationSource = "GDB"
+	SourceLLDB         ObservationSource = "LLDB"
+	SourceGhidra       ObservationSource = "GHIDRA"
+	SourceIDA          ObservationSource = "IDA"
+	SourceBinaryNinja   ObservationSource = "BINARY_NINJA"
+	SourceObjdump      ObservationSource = "OBJDUMP"
+	SourceReadelf      ObservationSource = "READelf"
+)
+
+// ObservationStream is the channel the raw text arrived on.
+type ObservationStream string
+
+const (
+	StreamStdout ObservationStream = "stdout"
+	StreamStderr ObservationStream = "stderr"
+	StreamLog   ObservationStream = "log"
+	StreamBuild ObservationStream = "build"
+	StreamDebug ObservationStream = "debug"
+)
+
+// Severity ranks observations for processing priority.
+type Severity string
+
+const (
+	SevP0 Severity = "P0" // crash / fatal / exception / assertion / segfault / test failure
+	SevP1 Severity = "P1" // error / compiler error / linker error / debugger breakpoint / failed validation
+	SevP2 Severity = "P2" // warning / performance anomaly / unexpected state
+	SevP3 Severity = "P3" // normal informational logs
+	SevP4 Severity = "P4" // high-volume repetitive logs
+)
+
+// EventType classifies the observation for downstream routing.
+type EventType string
+
+const (
+	EventTypeCrash          EventType = "CRASH"
+	EventTypeException      EventType = "EXCEPTION"
+	EventTypeAssertion      EventType = "ASSERTION"
+	EventTypeTestFailure    EventType = "TEST_FAILURE"
+	EventTypeCompilerDiag   EventType = "COMPILER_DIAG"
+	EventTypeLinkerDiag     EventType = "LINKER_DIAG"
+	EventTypeRuntimeError   EventType = "RUNTIME_ERROR"
+	EventTypeDebuggerBreak EventType = "DEBUGGER_BREAK"
+	EventTypeDecompilerOut  EventType = "DECOMPILER_OUTPUT"
+	EventTypeInfo           EventType = "INFO"
+	EventTypeAgentEvent     EventType = "AGENT_EVENT"
+)
+
+// EvidenceLevel records the provenance strength of an observation-to-code relation.
+type EvidenceLevel string
+
+const (
+	EvidenceDirect    EvidenceLevel = "DIRECT"
+	EvidenceStrong    EvidenceLevel = "STRONG"
+	EvidenceInferred  EvidenceLevel = "INFERRED"
+	EvidenceHypothesis EvidenceLevel = "HYPOTHESIS"
+	EvidenceUnresolved EvidenceLevel = "UNRESOLVED"
+)
+
+// ExtractedFields holds the deterministic information parsed from raw output.
+type ExtractedFields struct {
+	File       string            `json:"file,omitempty"`
+	Line       int               `json:"line,omitempty"`
+	Column     int               `json:"column,omitempty"`
+	Symbol     string            `json:"symbol,omitempty"`
+	Address    string            `json:"address,omitempty"`
+	Offset     string            `json:"offset,omitempty"`
+	Module     string            `json:"module,omitempty"`
+	Exception  string            `json:"exception,omitempty"`
+	ErrorCode  string            `json:"error_code,omitempty"`
+	TestName   string            `json:"test_name,omitempty"`
+	FuncName   string            `json:"func_name,omitempty"`
+	Class      string            `json:"class,omitempty"`
+	Struct     string            `json:"struct,omitempty"`
+	Stack      []string          `json:"stack,omitempty"`
+	Fields     map[string]string `json:"fields,omitempty"`
+}
+
+// RuntimeObservation is the normalized record produced by the interceptor.
+type RuntimeObservation struct {
+	ID               string            `json:"id"`
+	ProjectID        string            `json:"project_id"`
+	SessionID        string            `json:"session_id"`
+	ProcessID        string            `json:"process_id"`
+	Source           ObservationSource `json:"source"`
+	Timestamp        string            `json:"timestamp"`
+	Stream           ObservationStream `json:"stream"`
+	RawHash          string            `json:"raw_hash"`
+	NormalizedText   string            `json:"normalized_text"`
+	Severity         Severity          `json:"severity"`
+	EventType       EventType         `json:"event_type"`
+	Extracted        ExtractedFields   `json:"extracted_fields"`
+	WorkingDirectory string            `json:"working_directory,omitempty"`
+	Executable       string            `json:"executable,omitempty"`
+	BinaryID         string            `json:"binary_id,omitempty"`
+	GitCommit        string            `json:"git_commit,omitempty"`
+	GitBranch        string            `json:"git_branch,omitempty"`
+	BinaryHash       string            `json:"binary_hash,omitempty"`
+	SourceRevision   string            `json:"source_revision,omitempty"`
+	GraphVersion     uint64            `json:"graph_version,omitempty"`
+	Dropped          bool              `json:"dropped,omitempty"`
+	DropReason       string            `json:"drop_reason,omitempty"`
+}
+
+// StackFrame is one frame of a parsed stack trace.
+type StackFrame struct {
+	Index   int    `json:"index"`
+	Name    string `json:"name"`
+	Address string `json:"address,omitempty"`
+	Offset  string `json:"offset,omitempty"`
+	Module  string `json:"module,omitempty"`
+	File    string `json:"file,omitempty"`
+	Line    int    `json:"line,omitempty"`
+}
+
+// LogTemplate is a normalized log message with placeholders for variable parts.
+type LogTemplate struct {
+	ID         string   `json:"id"`
+	ProjectID  string   `json:"project_id"`
+	Template   string   `json:"template"`
+	SourceIDs  []string `json:"source_symbol_ids,omitempty"`
+	Count      int     `json:"count"`
+	FirstSeen  string  `json:"first_seen"`
+	LastSeen   string  `json:"last_seen"`
+	SampleVals []string `json:"sample_values,omitempty"`
+}
+
+// ObservationRelation links an observation to a graph entity with provenance.
+type ObservationRelation struct {
+	ObservationID string         `json:"observation_id"`
+	TargetID      string         `json:"target_id"`
+	Kind          string         `json:"kind"`
+	Evidence      EvidenceLevel `json:"evidence"`
+	Confidence    float64       `json:"confidence"`
+	Method        string        `json:"method"`
+	Reason        string        `json:"reason,omitempty"`
+}
+
+// ObservationAggregator tracks repeated log lines.
+type ObservationAggregator struct {
+	TemplateID   string   `json:"template_id"`
+	Template     string   `json:"template"`
+	Count        int      `json:"count"`
+	FirstSeen    string   `json:"first_seen"`
+	LastSeen     string   `json:"last_seen"`
+	SampleValues []string `json:"sample_values,omitempty"`
+	SourceIDs    []string `json:"source_symbol_ids,omitempty"`
+}

@@ -4,6 +4,65 @@ All notable changes to codeRAG are documented here.
 
 ## [Unreleased]
 
+## [v1.6.0] — 2026-09-22
+
+### New Features
+
+#### Runtime Observation Pipeline
+- `RuntimeObservation` — normalized runtime events with source, stream, severity, event type, and extracted fields
+- `RuntimeService` — stores/querys observations linked to code entities via graph edges
+- `LogTemplate` registry — extracts templates from repeated log lines, tracks count and sample values
+- `ObservationAggregator` — tracks repeated observations with first/last seen timestamps
+- Session observation capture and correlation with git commit/branch state
+
+#### Status Panel (4 tools)
+- `get_status_panel` — unified snapshot: connection state, session warmth, project context, cache hit rate, graph stats, active context, background activity
+- `get_session_warmth` — context reuse percentage, freshness metrics, warm vs cold indicators
+- `get_symbol_provenance` — why a symbol is in current context (task reference, session activity, graph relationship)
+- `emit_status_event` — emit status events for agent integration (AgentStarted, SessionStarted, FileOpened, SymbolReferenced, etc.)
+
+#### Session Management (4 tools)
+- `start_session` — start session with optional warm start from previous context
+- `end_session` — end current session
+- `get_session` — session info including warmth, context reuse, metrics
+- `get_warm_start_context` — hot files, functions, recent activity for warm start
+
+#### Project Snapshots (2 tools)
+- `create_snapshot` — create and persist project structure snapshot
+- `get_project_snapshot` — modules, entry points, dependencies overview
+
+#### Hot Context Resolution (2 tools)
+- `resolve_context` — hierarchical resolution: exact -> relationships -> task -> subsystem -> hot
+- `get_active_context` — currently active files, symbols, recent events and errors
+
+#### Runtime Tools (10 tools)
+- `get_runtime_history` — recent runtime observations for a project
+- `find_observation` — find observation by ID
+- `get_related_observations` — observations related to a specific observation
+- `get_function_observations` — observations emitted by or related to a function
+- `get_log_template` / `get_log_templates` — log template lookup
+- `explain_observation_relation` — explain how observation relates to code entity
+- `capture_output` — capture output for a session (for testing or manual injection)
+- `register_runtime_session` / `unregister_runtime_session` — session registration
+- `get_runtime_stats` — runtime observation pipeline statistics
+- `get_background_activity` — indexing, graph updates, observation correlation, cache operations
+
+#### Background Activity (1 tool)
+- `get_background_activity` — current background activity status
+
+### New ID Kind
+- `Observation` (`obs`) — for runtime observation graph nodes
+
+### Types Added
+- `ObservationSource` — AGENT, PROCESS, APPLICATION, COMPILER, TEST, DEBUGGER, GDB, LLDB, GHIDRA, IDA, BINARY_NINJA, OBJDUMP, READELF
+- `ObservationStream` — stdout, stderr, log, build, debug
+- `Severity` — P0 (crash/fatal), P1 (error), P2 (warning), P3 (info), P4 (high-volume)
+- `EventType` — CRASH, EXCEPTION, ASSERTION, TEST_FAILURE, COMPILER_DIAG, LINKER_DIAG, RUNTIME_ERROR, DEBUGGER_BREAK, DECOMPILER_OUTPUT, INFO, AGENT_EVENT
+- `EvidenceLevel` — DIRECT, STRONG, INFERRED, HYPOTHESIS, UNRESOLVED
+- `ExtractedFields` — file, line, column, symbol, address, module, exception, error_code, test_name, func_name, class, struct, stack
+- `StackFrame` — index, name, address, offset, module, file, line
+- `ObservationRelation` — observation-to-graph link with evidence and confidence
+
 ## [v1.5.0] — 2026-09-22
 
 ### New Features

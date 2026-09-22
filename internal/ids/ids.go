@@ -25,11 +25,13 @@ const (
 	Span    = "span"
 	BinSpan = "binspan"
 	Task    = "task"
+	Observation = "obs"
 )
 
 var known = map[string]bool{
 	Func: true, Class: true, Struct: true, File: true, BinFunc: true, Binary: true,
 	BB: true, Insn: true, Var: true, Slice: true, Span: true, BinSpan: true, Task: true,
+	Observation: true,
 }
 
 // Rel returns p relative to root using forward slashes, or p unchanged when it
